@@ -1,0 +1,253 @@
+package socialuna.datos;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.Objects;
+
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonParseException;
+import com.google.gson.Strictness;
+
+import socialuna.modelo.Usuario;
+
+/**
+ * Punto único de persistencia del proyecto: lee y escribe los archivos JSON de {@code data/}.
+ *
+ * <p>Reglas de seguridad de los datos:
+ * <ul>
+ *   <li><b>Carga transaccional:</b> se lee primero en una estructura temporal. La lista
+ *       real solo se reemplaza si todo el archivo es válido. Si falla, la lista en
+ *       memoria queda como estaba.</li>
+ *   <li><b>Archivo inexistente:</b> se crean la carpeta y el archivo con {@code []}.</li>
+ *   <li><b>Archivo vacío:</b> se interpreta como "sin datos", sin error.</li>
+ *   <li><b>Archivo dañado</b> (JSON inválido o registros inconsistentes): antes de lanzar
+ *       el error se hace una copia de respaldo ({@code usuarios.json.corrupto-<fecha>}).
+ *       Así, un guardado posterior no destruye la única copia de los datos originales.
+ *       Si no se pudo hacer el respaldo, se bloquea la escritura de ese archivo.</li>
+ *   <li><b>Escritura atómica:</b> se escribe en un {@code .tmp} y luego se reemplaza el
+ *       original. Si el programa falla a mitad de la escritura, el archivo anterior queda intacto.</li>
+ * </ul>
+ *
+ * <p>Estado por módulos: los usuarios ya están implementados. Amistades (Módulo 2) y
+ * publicaciones (Módulo 3) tienen definidos sus archivos y su lugar en
+ * {@link #cargarTodo} / {@link #guardarTodo}, pendientes de implementar.
+ */
+public class GestorArchivos {
+
+    public static final String DIRECTORIO_POR_DEFECTO = "data";
+    public static final String ARCHIVO_USUARIOS = "usuarios.json";
+    public static final String ARCHIVO_AMISTADES = "amistades.json";
+    public static final String ARCHIVO_PUBLICACIONES = "publicaciones.json";
+
+    private static final DateTimeFormatter FORMATO_RESPALDO = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
+
+    private final Path directorio;
+    private final Gson gson;
+
+    /** Si es {@code true}, no se permite sobrescribir usuarios.json (ver la descripción de la clase). */
+    private boolean escrituraUsuariosBloqueada;
+
+    /** Usa la carpeta {@code data/} relativa al directorio de ejecución (la raíz del proyecto). */
+    public GestorArchivos() {
+        this(Paths.get(DIRECTORIO_POR_DEFECTO));
+    }
+
+    /** Permite indicar otra carpeta (por ejemplo, una temporal en las pruebas). */
+    public GestorArchivos(Path directorio) {
+        this.directorio = Objects.requireNonNull(directorio, "El directorio no puede ser nulo.");
+        this.gson = new GsonBuilder()
+                .setPrettyPrinting()
+                .disableHtmlEscaping()
+                .setStrictness(Strictness.STRICT)
+                .create();
+    }
+
+    public Path getDirectorio() {
+        return directorio;
+    }
+
+    public Path getRutaUsuarios() {
+        return directorio.resolve(ARCHIVO_USUARIOS);
+    }
+
+    public Path getRutaAmistades() {
+        return directorio.resolve(ARCHIVO_AMISTADES);
+    }
+
+    public Path getRutaPublicaciones() {
+        return directorio.resolve(ARCHIVO_PUBLICACIONES);
+    }
+
+    // ------------------------------------------------------------------ usuarios
+
+    /**
+     * Carga {@code usuarios.json} en {@code destino}, reemplazando su contenido.
+     * Se reconstruyen la lista dinámica y el índice usuario → Usuario.
+     *
+     * @return cantidad de usuarios cargados
+     * @throws PersistenciaException si el archivo no se puede leer o su contenido es
+     *                               inválido. En ese caso {@code destino} no se modifica.
+     */
+    public int cargarUsuarios(ListaUsuarios destino) throws PersistenciaException {
+        Objects.requireNonNull(destino, "La lista destino no puede ser nula.");
+        Path ruta = getRutaUsuarios();
+
+        crearDirectorioSiNoExiste();
+        if (Files.notExists(ruta)) {
+            escribirTexto(ruta, "[]");
+            destino.limpiar();
+            return 0;
+        }
+
+        String contenido = leerTexto(ruta);
+        if (contenido.isBlank()) {
+            destino.limpiar();
+            return 0;
+        }
+
+        Usuario[] leidos;
+        try {
+            leidos = gson.fromJson(contenido, Usuario[].class);
+        } catch (JsonParseException e) {
+            throw archivoDanado(ruta, "el contenido no es un JSON válido de usuarios", e);
+        }
+
+        ListaUsuarios temporal = new ListaUsuarios();
+        if (leidos != null) {
+            for (int i = 0; i < leidos.length; i++) {
+                if (leidos[i] == null) {
+                    throw archivoDanado(ruta, "el registro #" + (i + 1) + " está vacío", null);
+                }
+                try {
+                    temporal.agregar(leidos[i]);
+                } catch (IllegalArgumentException e) {
+                    throw archivoDanado(ruta, "el registro #" + (i + 1) + " es inválido (" + e.getMessage() + ")", e);
+                }
+            }
+        }
+
+        destino.reemplazarCon(temporal);
+        return destino.tamano();
+    }
+
+    /**
+     * Guarda todos los usuarios en {@code usuarios.json} (escritura atómica).
+     *
+     * @throws PersistenciaException si no se puede escribir o la escritura está bloqueada
+     */
+    public void guardarUsuarios(ListaUsuarios origen) throws PersistenciaException {
+        Objects.requireNonNull(origen, "La lista origen no puede ser nula.");
+        if (escrituraUsuariosBloqueada) {
+            throw new PersistenciaException("No se guardaron los usuarios: " + ARCHIVO_USUARIOS
+                    + " estaba dañado y no se pudo respaldar. Revise el archivo manualmente.");
+        }
+        ListaDinamica<Usuario> todos = origen.obtenerTodos();
+        String json = gson.toJson(todos.aArreglo(new Usuario[0]));
+        crearDirectorioSiNoExiste();
+        escribirTextoAtomico(getRutaUsuarios(), json);
+    }
+
+    // ------------------------------------------------------------------ todo el sistema
+
+    /**
+     * Carga todos los datos del sistema. Se llama una vez al iniciar la aplicación.
+     *
+     * <p>Pendiente: Módulo 2 ({@code cargarAmistades}) y Módulo 3 ({@code cargarPublicaciones}).
+     */
+    public void cargarTodo(ListaUsuarios usuarios, ListaPublicaciones publicaciones, RedAmistades amistades)
+            throws PersistenciaException {
+        Objects.requireNonNull(publicaciones, "La lista de publicaciones no puede ser nula.");
+        Objects.requireNonNull(amistades, "La red de amistades no puede ser nula.");
+        cargarUsuarios(usuarios);
+        // TODO Módulo 2 (Greivin): cargarAmistades(amistades);
+        // TODO Módulo 3 (Mariano): cargarPublicaciones(publicaciones);
+    }
+
+    /**
+     * Guarda todos los datos del sistema. Se llama al cerrar sesión y al cerrar la aplicación.
+     *
+     * <p>Pendiente: Módulo 2 ({@code guardarAmistades}) y Módulo 3 ({@code guardarPublicaciones}).
+     */
+    public void guardarTodo(ListaUsuarios usuarios, ListaPublicaciones publicaciones, RedAmistades amistades)
+            throws PersistenciaException {
+        Objects.requireNonNull(publicaciones, "La lista de publicaciones no puede ser nula.");
+        Objects.requireNonNull(amistades, "La red de amistades no puede ser nula.");
+        guardarUsuarios(usuarios);
+        // TODO Módulo 2 (Greivin): guardarAmistades(amistades);
+        // TODO Módulo 3 (Mariano): guardarPublicaciones(publicaciones);
+    }
+
+    // ------------------------------------------------------------------ utilidades de archivos
+
+    private void crearDirectorioSiNoExiste() throws PersistenciaException {
+        try {
+            Files.createDirectories(directorio);
+        } catch (IOException e) {
+            throw new PersistenciaException("No se pudo crear la carpeta de datos '" + directorio + "'.", e);
+        }
+    }
+
+    private String leerTexto(Path ruta) throws PersistenciaException {
+        try {
+            String texto = Files.readString(ruta, StandardCharsets.UTF_8);
+            // Quitar el BOM que algunos editores de Windows agregan al inicio
+            return texto.startsWith("﻿") ? texto.substring(1) : texto;
+        } catch (IOException e) {
+            throw new PersistenciaException("No se pudo leer el archivo '" + ruta + "'.", e);
+        }
+    }
+
+    private void escribirTexto(Path ruta, String texto) throws PersistenciaException {
+        try {
+            Files.writeString(ruta, texto, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new PersistenciaException("No se pudo crear el archivo '" + ruta + "'.", e);
+        }
+    }
+
+    /** Escribe en un archivo temporal y lo mueve sobre el destino. */
+    private void escribirTextoAtomico(Path ruta, String texto) throws PersistenciaException {
+        Path temporal = ruta.resolveSibling(ruta.getFileName() + ".tmp");
+        try {
+            Files.writeString(temporal, texto, StandardCharsets.UTF_8);
+            try {
+                Files.move(temporal, ruta, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(temporal, ruta, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (IOException e) {
+            try {
+                Files.deleteIfExists(temporal);
+            } catch (IOException ignorada) {
+                // El .tmp sobrante no afecta los datos; está ignorado en .gitignore.
+            }
+            throw new PersistenciaException("No se pudo guardar el archivo '" + ruta + "'.", e);
+        }
+    }
+
+    /**
+     * Respalda un archivo dañado y construye la excepción para informarlo.
+     * Si el respaldo falla, bloquea la escritura para no perder los datos originales.
+     */
+    private PersistenciaException archivoDanado(Path ruta, String motivo, Throwable causa) {
+        Path respaldo = ruta.resolveSibling(ruta.getFileName() + ".corrupto-"
+                + LocalDateTime.now().format(FORMATO_RESPALDO));
+        String mensaje = "El archivo '" + ruta + "' está dañado: " + motivo + ".";
+        try {
+            Files.copy(ruta, respaldo, StandardCopyOption.REPLACE_EXISTING);
+            mensaje += " Se guardó una copia en '" + respaldo.getFileName() + "'.";
+        } catch (IOException e) {
+            escrituraUsuariosBloqueada = true;
+            mensaje += " No se pudo crear una copia de respaldo; se bloqueó la escritura para no perder datos.";
+        }
+        return new PersistenciaException(mensaje, causa);
+    }
+}
