@@ -15,7 +15,11 @@ import socialuna.modelo.Usuario;
  */
 public final class Sesion {
 
-    private static Usuario usuarioActivo;
+    /**
+     * {@code volatile}: el inicio de sesión se ejecuta en un {@code SwingWorker} (otro hilo)
+     * y las ventanas lo consultan desde el hilo de eventos de Swing.
+     */
+    private static volatile Usuario usuarioActivo;
 
     private Sesion() {
         // Clase de utilidad: no se instancia.

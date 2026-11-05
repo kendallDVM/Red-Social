@@ -10,6 +10,7 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.util.Arrays;
 import java.util.Objects;
+import java.util.concurrent.ExecutionException;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
@@ -19,6 +20,7 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPasswordField;
 import javax.swing.JTextField;
+import javax.swing.SwingWorker;
 import javax.swing.WindowConstants;
 import javax.swing.text.JTextComponent;
 
@@ -36,6 +38,11 @@ import socialuna.servicios.ServicioAutenticacion;
  * Si el registro tiene éxito, vuelve al login con el usuario ya escrito.
  *
  * <p>Cerrar esta ventana con la X equivale a <b>Volver</b>: no termina la aplicación.
+ *
+ * <p>El registro (hash BCrypt y guardado en {@code usuarios.json}) se ejecuta en un
+ * {@link SwingWorker}. Mientras tanto, los controles se deshabilitan para impedir
+ * registros duplicados por doble clic, y la X no cierra la ventana para no interrumpir
+ * la escritura.
  */
 public class VentanaRegistro extends JFrame {
 
@@ -47,6 +54,11 @@ public class VentanaRegistro extends JFrame {
     private final JTextField campoUsuario = Estilos.campoTexto(24);
     private final JPasswordField campoContrasena = Estilos.campoContrasena(24);
     private final JPasswordField campoConfirmacion = Estilos.campoContrasena(24);
+    private final JButton botonRegistrar = Estilos.botonPrimario("Registrar");
+    private final JButton botonVolver = Estilos.botonSecundario("Volver");
+
+    /** {@code true} mientras se registra una cuenta en segundo plano. */
+    private boolean procesando;
 
     public VentanaRegistro(ServicioAutenticacion servicio, VentanaLogin login) {
         super("Social UNA - Crear cuenta");
@@ -57,7 +69,9 @@ public class VentanaRegistro extends JFrame {
         addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent e) {
-                volver(null);
+                if (!procesando) { // no interrumpir un registro que se está guardando
+                    volver(null);
+                }
             }
         });
         construirInterfaz();
@@ -94,9 +108,7 @@ public class VentanaRegistro extends JFrame {
         agregarCampo(formulario, c, "Contraseña", 'C', campoContrasena, null);
         agregarCampo(formulario, c, "Confirmar contraseña", 'f', campoConfirmacion, null);
 
-        JButton botonRegistrar = Estilos.botonPrimario("Registrar");
         botonRegistrar.addActionListener(e -> registrar());
-        JButton botonVolver = Estilos.botonSecundario("Volver");
         botonVolver.addActionListener(e -> volver(null));
 
         JPanel botones = new JPanel(new GridLayout(1, 2, 12, 0));
@@ -123,20 +135,62 @@ public class VentanaRegistro extends JFrame {
         }
     }
 
+    /**
+     * Registra la cuenta en segundo plano. Se ejecuta en el EDT; solo {@code doInBackground}
+     * corre en otro hilo y no toca componentes gráficos.
+     */
     private void registrar() {
+        if (procesando) {
+            return; // evita registros duplicados por doble clic
+        }
+        String id = campoId.getText();
+        String nombre = campoNombre.getText();
+        String usuario = campoUsuario.getText();
+        // getPassword() devuelve copias nuevas; se borran cuando el servicio termina.
         char[] contrasena = campoContrasena.getPassword();
         char[] confirmacion = campoConfirmacion.getPassword();
-        ResultadoAutenticacion resultado;
-        setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
-        try {
-            resultado = servicio.registrar(campoId.getText(), campoNombre.getText(), campoUsuario.getText(),
-                    contrasena, confirmacion);
-        } finally {
-            Arrays.fill(contrasena, '\0'); // no dejar las contraseñas en memoria
-            Arrays.fill(confirmacion, '\0');
-            setCursor(Cursor.getDefaultCursor());
-        }
+        establecerProcesando(true);
 
+        new SwingWorker<ResultadoAutenticacion, Void>() {
+            @Override
+            protected ResultadoAutenticacion doInBackground() {
+                try {
+                    return servicio.registrar(id, nombre, usuario, contrasena, confirmacion);
+                } finally {
+                    Arrays.fill(contrasena, '\0'); // BCrypt ya terminó de usarlas
+                    Arrays.fill(confirmacion, '\0');
+                }
+            }
+
+            @Override
+            protected void done() { // EDT
+                establecerProcesando(false);
+                try {
+                    mostrarResultado(get());
+                } catch (ExecutionException e) {
+                    JOptionPane.showMessageDialog(VentanaRegistro.this,
+                            "Ocurrió un error inesperado al registrar la cuenta. Intente de nuevo.",
+                            "No se pudo registrar", JOptionPane.ERROR_MESSAGE);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }.execute();
+    }
+
+    /** Deshabilita los controles y muestra el indicador de espera mientras se procesa. */
+    private void establecerProcesando(boolean valor) {
+        procesando = valor;
+        for (JComponent campo : new JComponent[] {
+                campoId, campoNombre, campoUsuario, campoContrasena, campoConfirmacion, botonRegistrar, botonVolver}) {
+            campo.setEnabled(!valor);
+        }
+        botonRegistrar.setText(valor ? "Registrando..." : "Registrar");
+        setCursor(valor ? Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR) : Cursor.getDefaultCursor());
+    }
+
+    /** Muestra el resultado del registro (EDT). */
+    private void mostrarResultado(ResultadoAutenticacion resultado) {
         if (resultado.esExitoso()) {
             JOptionPane.showMessageDialog(this, resultado.getMensaje(), "Registro exitoso",
                     JOptionPane.INFORMATION_MESSAGE);

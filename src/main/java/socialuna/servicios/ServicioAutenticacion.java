@@ -41,6 +41,15 @@ public class ServicioAutenticacion {
     /** Mensaje único para cualquier fallo de credenciales: no revela si el usuario existe. */
     public static final String MENSAJE_CREDENCIALES_INVALIDAS = "Usuario o contraseña incorrectos.";
 
+    /**
+     * Hash ficticio precalculado con {@link #COSTO_POR_DEFECTO}. Se generó una sola vez con
+     * la misma biblioteca BCrypt a partir de una contraseña aleatoria de 32 caracteres que
+     * se descartó; no pertenece a ninguna cuenta. Usarlo evita calcular un hash de costo
+     * 12 (unos 200 ms) al crear el servicio, que ocurre en el hilo de eventos de Swing.
+     */
+    static final String HASH_FICTICIO_PREDETERMINADO =
+            "$2a$12$Pq4cQMIEsO5/gYr7X7eUS.UfDt2OkeJWvBmg6bXajDqcRET.VjyIe";
+
     private final ContextoAplicacion contexto;
     private final int costo;
 
@@ -48,6 +57,7 @@ public class ServicioAutenticacion {
      * Hash de una contraseña aleatoria. Si el usuario no existe, se verifica la
      * contraseña contra este hash para que la respuesta tarde lo mismo que con un
      * usuario real. Así no se puede deducir por el tiempo si una cuenta existe.
+     * Su resultado nunca concede acceso: si el usuario no existe, el login falla siempre.
      */
     private final String hashFicticio;
 
@@ -65,7 +75,9 @@ public class ServicioAutenticacion {
         }
         this.contexto = Objects.requireNonNull(contexto, "El contexto no puede ser nulo.");
         this.costo = costo;
-        this.hashFicticio = generarHashFicticio(costo);
+        // Con el costo de la aplicación se usa el hash precalculado (no bloquea el inicio).
+        // Con otros costos (pruebas) se genera uno del mismo costo para igualar los tiempos.
+        this.hashFicticio = costo == COSTO_POR_DEFECTO ? HASH_FICTICIO_PREDETERMINADO : generarHashFicticio(costo);
     }
 
     // ------------------------------------------------------------------ registro
@@ -75,6 +87,9 @@ public class ServicioAutenticacion {
      *
      * <p>Orden de las validaciones: campos obligatorios → usuario sin espacios →
      * contraseñas coincidentes → largo de la contraseña → ID único → usuario único.
+     *
+     * <p>Puede ejecutarse en un {@code SwingWorker}. La ventana de registro deshabilita sus
+     * controles mientras tanto, así que no hay otra operación sobre la lista al mismo tiempo.
      *
      * <p><b>Consistencia:</b> primero se guarda en disco una copia de la lista con el
      * usuario nuevo, y solo si ese guardado funciona se agrega a la lista en memoria.
@@ -148,12 +163,19 @@ public class ServicioAutenticacion {
      * resultado ({@link ResultadoAutenticacion.Tipo#CREDENCIALES_INVALIDAS}) con el mismo
      * mensaje. Así no se revela cuál de los dos datos falló.
      *
+     * <p>Una contraseña nula, vacía o formada solo por espacios u otros caracteres en
+     * blanco se trata como campo vacío (igual que en el registro). La contraseña nunca se
+     * recorta: los espacios que forman parte de una contraseña válida se respetan.
+     *
+     * <p>Puede ejecutarse fuera del hilo de eventos de Swing (por ejemplo, en un
+     * {@code SwingWorker}): no toca componentes gráficos.
+     *
      * @param usuario    nombre de usuario (sin distinguir mayúsculas; se ignoran espacios al inicio y al final)
      * @param contrasena contraseña en texto plano (no se modifica el arreglo)
      */
     public ResultadoAutenticacion iniciarSesion(String usuario, char[] contrasena) {
         String usuarioLimpio = limpiar(usuario);
-        if (usuarioLimpio.isEmpty() || contrasena == null || contrasena.length == 0) {
+        if (usuarioLimpio.isEmpty() || contrasenaVacia(contrasena)) {
             return ResultadoAutenticacion.error(ResultadoAutenticacion.Tipo.CAMPOS_VACIOS,
                     "Ingrese su usuario y su contraseña.");
         }

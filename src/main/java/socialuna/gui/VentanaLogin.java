@@ -8,6 +8,7 @@ import java.awt.Insets;
 import java.awt.event.WindowListener;
 import java.util.Arrays;
 import java.util.Objects;
+import java.util.concurrent.ExecutionException;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
@@ -16,6 +17,7 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPasswordField;
 import javax.swing.JTextField;
+import javax.swing.SwingWorker;
 import javax.swing.WindowConstants;
 
 import socialuna.servicios.ResultadoAutenticacion;
@@ -27,6 +29,10 @@ import socialuna.servicios.ServicioAutenticacion;
  * <p>Campos: usuario y contraseña oculta. Botones: <b>Ingresar</b> (también con Enter)
  * y <b>Crear cuenta</b>. Toda la validación la hace {@link ServicioAutenticacion}; esta
  * ventana solo muestra el resultado.
+ *
+ * <p>La verificación BCrypt (unos 200 ms) se ejecuta en un {@link SwingWorker} para no
+ * congelar la interfaz. Mientras tanto, los controles se deshabilitan para impedir
+ * envíos repetidos.
  *
  * <p>Al iniciar sesión, la ventana se oculta y llama a {@link NavegacionPrincipal}.
  * Cerrar esta ventana con la X termina la aplicación guardando los datos
@@ -40,6 +46,11 @@ public class VentanaLogin extends JFrame {
 
     private final JTextField campoUsuario = Estilos.campoTexto(22);
     private final JPasswordField campoContrasena = Estilos.campoContrasena(22);
+    private final JButton botonIngresar = Estilos.botonPrimario("Ingresar");
+    private final JButton botonCrearCuenta = Estilos.botonSecundario("Crear cuenta");
+
+    /** {@code true} mientras se verifica un inicio de sesión en segundo plano. */
+    private boolean procesando;
 
     public VentanaLogin(ServicioAutenticacion servicio, NavegacionPrincipal navegacion, WindowListener cierre) {
         super("Social UNA - Iniciar sesión");
@@ -86,14 +97,12 @@ public class VentanaLogin extends JFrame {
         c.insets = new Insets(0, 0, 22, 0);
         formulario.add(campoContrasena, c);
 
-        JButton botonIngresar = Estilos.botonPrimario("Ingresar");
         botonIngresar.addActionListener(e -> ingresar());
         c.insets = new Insets(0, 0, 18, 0);
         formulario.add(botonIngresar, c);
 
         c.insets = new Insets(0, 0, 6, 0);
         formulario.add(Estilos.textoSecundario("¿Todavía no tiene cuenta?"), c);
-        JButton botonCrearCuenta = Estilos.botonSecundario("Crear cuenta");
         botonCrearCuenta.addActionListener(e -> abrirRegistro());
         c.insets = new Insets(0, 0, 0, 0);
         formulario.add(botonCrearCuenta, c);
@@ -120,18 +129,48 @@ public class VentanaLogin extends JFrame {
         }
     }
 
+    /**
+     * Inicia sesión en segundo plano. Se ejecuta en el EDT; solo {@code doInBackground}
+     * corre en otro hilo y no toca componentes gráficos.
+     */
     private void ingresar() {
-        char[] contrasena = campoContrasena.getPassword();
-        ResultadoAutenticacion resultado;
-        setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
-        try {
-            resultado = servicio.iniciarSesion(campoUsuario.getText(), contrasena);
-        } finally {
-            Arrays.fill(contrasena, '\0'); // no dejar la contraseña en memoria
-            setCursor(Cursor.getDefaultCursor());
+        if (procesando) {
+            return; // evita solicitudes repetidas (doble clic o Enter repetido)
         }
+        String usuario = campoUsuario.getText();
+        // getPassword() devuelve una copia nueva; el campo se limpia de inmediato.
+        char[] contrasena = campoContrasena.getPassword();
         campoContrasena.setText("");
+        establecerProcesando(true);
 
+        new SwingWorker<ResultadoAutenticacion, Void>() {
+            @Override
+            protected ResultadoAutenticacion doInBackground() {
+                try {
+                    return servicio.iniciarSesion(usuario, contrasena);
+                } finally {
+                    Arrays.fill(contrasena, '\0'); // se borra cuando BCrypt ya terminó de usarla
+                }
+            }
+
+            @Override
+            protected void done() { // EDT
+                establecerProcesando(false);
+                try {
+                    mostrarResultado(get());
+                } catch (ExecutionException e) {
+                    JOptionPane.showMessageDialog(VentanaLogin.this,
+                            "Ocurrió un error inesperado al iniciar sesión. Intente de nuevo.",
+                            "Inicio de sesión", JOptionPane.ERROR_MESSAGE);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }.execute();
+    }
+
+    /** Muestra el resultado del inicio de sesión (EDT). */
+    private void mostrarResultado(ResultadoAutenticacion resultado) {
         if (!resultado.esExitoso()) {
             boolean faltanDatos = resultado.getTipo() == ResultadoAutenticacion.Tipo.CAMPOS_VACIOS;
             JOptionPane.showMessageDialog(this, resultado.getMensaje(), "Inicio de sesión",
@@ -148,7 +187,21 @@ public class VentanaLogin extends JFrame {
         navegacion.abrir(resultado.getUsuario(), this::cerrarSesionYVolver);
     }
 
+    /** Deshabilita los controles y muestra el indicador de espera mientras se procesa. */
+    private void establecerProcesando(boolean valor) {
+        procesando = valor;
+        campoUsuario.setEnabled(!valor);
+        campoContrasena.setEnabled(!valor);
+        botonIngresar.setEnabled(!valor);
+        botonCrearCuenta.setEnabled(!valor);
+        botonIngresar.setText(valor ? "Verificando..." : "Ingresar");
+        setCursor(valor ? Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR) : Cursor.getDefaultCursor());
+    }
+
     private void abrirRegistro() {
+        if (procesando) {
+            return;
+        }
         campoContrasena.setText("");
         setVisible(false);
         new VentanaRegistro(servicio, this).setVisible(true);

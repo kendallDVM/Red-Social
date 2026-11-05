@@ -30,8 +30,11 @@ import socialuna.modelo.Usuario;
  *   <li><b>Archivo vacío:</b> se interpreta como "sin datos", sin error.</li>
  *   <li><b>Archivo dañado</b> (JSON inválido o registros inconsistentes): antes de lanzar
  *       el error se hace una copia de respaldo ({@code usuarios.json.corrupto-<fecha>}).
- *       Así, un guardado posterior no destruye la única copia de los datos originales.
- *       Si no se pudo hacer el respaldo, se bloquea la escritura de ese archivo.</li>
+ *       Así siempre queda una copia de los datos originales.</li>
+ *   <li><b>Protección tras una carga fallida:</b> si {@link #cargarUsuarios} falla (archivo
+ *       dañado o ilegible), este gestor <b>bloquea</b> {@link #guardarUsuarios} para no
+ *       reemplazar el archivo original por una lista vacía o incompleta. El bloqueo se
+ *       levanta solo cuando una carga posterior termina correctamente.</li>
  *   <li><b>Escritura atómica:</b> se escribe en un {@code .tmp} y luego se reemplaza el
  *       original. Si el programa falla a mitad de la escritura, el archivo anterior queda intacto.</li>
  * </ul>
@@ -52,7 +55,10 @@ public class GestorArchivos {
     private final Path directorio;
     private final Gson gson;
 
-    /** Si es {@code true}, no se permite sobrescribir usuarios.json (ver la descripción de la clase). */
+    /**
+     * Si es {@code true}, no se permite sobrescribir usuarios.json: la última carga falló
+     * y el archivo original debe conservarse (ver la descripción de la clase).
+     */
     private boolean escrituraUsuariosBloqueada;
 
     /** Usa la carpeta {@code data/} relativa al directorio de ejecución (la raíz del proyecto). */
@@ -92,12 +98,36 @@ public class GestorArchivos {
      * Carga {@code usuarios.json} en {@code destino}, reemplazando su contenido.
      * Se reconstruyen la lista dinámica y el índice usuario → Usuario.
      *
+     * <p>Si la carga falla, se bloquea {@link #guardarUsuarios} en este gestor hasta que
+     * una carga posterior termine correctamente. Un archivo inexistente o vacío
+     * <b>no</b> es un fallo.
+     *
      * @return cantidad de usuarios cargados
      * @throws PersistenciaException si el archivo no se puede leer o su contenido es
      *                               inválido. En ese caso {@code destino} no se modifica.
      */
     public int cargarUsuarios(ListaUsuarios destino) throws PersistenciaException {
         Objects.requireNonNull(destino, "La lista destino no puede ser nula.");
+        try {
+            int cantidad = leerUsuariosEn(destino);
+            escrituraUsuariosBloqueada = false; // carga válida: se puede volver a guardar
+            return cantidad;
+        } catch (PersistenciaException e) {
+            escrituraUsuariosBloqueada = true;  // conservar el archivo original
+            throw e;
+        }
+    }
+
+    /**
+     * Indica si {@link #guardarUsuarios} está bloqueado porque la última carga de
+     * usuarios falló.
+     */
+    public boolean isEscrituraUsuariosBloqueada() {
+        return escrituraUsuariosBloqueada;
+    }
+
+    /** Lectura transaccional de usuarios.json (ver {@link #cargarUsuarios}). */
+    private int leerUsuariosEn(ListaUsuarios destino) throws PersistenciaException {
         Path ruta = getRutaUsuarios();
 
         crearDirectorioSiNoExiste();
@@ -147,7 +177,8 @@ public class GestorArchivos {
         Objects.requireNonNull(origen, "La lista origen no puede ser nula.");
         if (escrituraUsuariosBloqueada) {
             throw new PersistenciaException("No se guardaron los usuarios: " + ARCHIVO_USUARIOS
-                    + " estaba dañado y no se pudo respaldar. Revise el archivo manualmente.");
+                    + " no se pudo cargar correctamente y se protegió para no perder sus datos."
+                    + " Revise o restaure el archivo y vuelva a abrir la aplicación.");
         }
         ListaDinamica<Usuario> todos = origen.obtenerTodos();
         String json = gson.toJson(todos.aArreglo(new Usuario[0]));

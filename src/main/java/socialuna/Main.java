@@ -8,19 +8,26 @@ import socialuna.datos.PersistenciaException;
 import socialuna.gui.CierreAplicacion;
 import socialuna.gui.Estilos;
 import socialuna.gui.NavegacionPrincipal;
+import socialuna.gui.VentanaAutenticada;
 import socialuna.gui.VentanaLogin;
-import socialuna.modelo.Usuario;
 import socialuna.servicios.ContextoAplicacion;
 import socialuna.servicios.ServicioAutenticacion;
 
 /**
  * Punto de entrada de Social UNA.
  *
- * <p>Flujo: cargar {@code data/} → mostrar el login → (inicio de sesión) → ventana principal.
+ * <p>Flujo: cargar {@code data/} → mostrar el login → (inicio de sesión) → pantalla
+ * autenticada → (cerrar sesión) → login.
  *
- * <p><b>Integración pendiente (Módulo 3, Mariano):</b> {@link #destinoTemporal} es solo
- * un aviso provisional para poder probar el inicio y el cierre de sesión. Cuando exista
- * {@code VentanaPrincipal}, se reemplaza la línea marcada con {@code TODO}.
+ * <p>Si los datos no se pueden cargar (por ejemplo, {@code usuarios.json} está dañado),
+ * se muestra el error y la aplicación <b>no continúa</b>: así no se crea ninguna sesión
+ * ni se guarda una lista vacía encima del archivo original. Un archivo inexistente o
+ * vacío no es un error.
+ *
+ * <p><b>Integración pendiente (Módulo 3, Mariano):</b> {@link VentanaAutenticada} es un
+ * destino temporal para comprobar la autenticación. Cuando exista {@code VentanaPrincipal},
+ * se reemplaza la línea marcada con {@code TODO}, que usa el mismo contrato
+ * {@link NavegacionPrincipal}.
  */
 public final class Main {
 
@@ -40,41 +47,26 @@ public final class Main {
             contexto.cargarTodo();
         } catch (PersistenciaException e) {
             JOptionPane.showMessageDialog(null,
-                    e.getMessage() + "\n\nLa aplicación continuará sin los datos que no se pudieron cargar.",
-                    "Social UNA - Problema al cargar los datos",
-                    JOptionPane.WARNING_MESSAGE);
+                    e.getMessage()
+                            + "\n\nPara proteger sus datos, la aplicación no se iniciará y no modificó el archivo."
+                            + "\nRevise o restaure el archivo (puede usar la copia de respaldo indicada)"
+                            + " y vuelva a abrir Social UNA.",
+                    "Social UNA - No se pudieron cargar los datos",
+                    JOptionPane.ERROR_MESSAGE);
+            // Se termina sin pasar por CierreAplicacion: no se guarda nada.
+            System.exit(1);
+            return;
         }
 
+        // El servicio usa un hash ficticio precalculado: crearlo no bloquea el EDT.
         ServicioAutenticacion servicio = new ServicioAutenticacion(contexto);
         CierreAplicacion cierre = new CierreAplicacion(contexto);
 
-        // TODO Módulo 3 (Mariano): reemplazar por
+        // TODO Módulo 3 (Mariano): reemplazar VentanaAutenticada por
         //   (usuario, cerrarSesion) -> new VentanaPrincipal(contexto, usuario, cerrarSesion, cierre).setVisible(true);
-        NavegacionPrincipal navegacion = (usuario, cerrarSesion) -> destinoTemporal(usuario, cerrarSesion, cierre);
+        NavegacionPrincipal navegacion = (usuario, cerrarSesion) ->
+                new VentanaAutenticada(usuario, cerrarSesion, cierre).setVisible(true);
 
         new VentanaLogin(servicio, navegacion, cierre).mostrar(null);
-    }
-
-    /**
-     * Aviso provisional que ocupa el lugar de la ventana principal mientras el Módulo 3
-     * no esté integrado. Permite probar "Cerrar sesión" y "Salir".
-     */
-    private static void destinoTemporal(Usuario usuario, Runnable cerrarSesion, CierreAplicacion cierre) {
-        String[] opciones = {"Cerrar sesión", "Salir de la aplicación"};
-        int opcion = JOptionPane.showOptionDialog(null,
-                "Sesión iniciada como " + usuario.getNombre() + " (@" + usuario.getUsuario() + ").\n\n"
-                        + "La ventana principal (Muro, Buscar, Amigos) se integrará en el Módulo 3.",
-                "Social UNA - Sesión iniciada",
-                JOptionPane.DEFAULT_OPTION,
-                JOptionPane.INFORMATION_MESSAGE,
-                null, opciones, opciones[0]);
-
-        if (opcion == 0) {
-            cerrarSesion.run();
-        } else {
-            cierre.salir(null);
-            // Si el usuario decidió no salir (falló el guardado), se vuelve a mostrar el aviso.
-            destinoTemporal(usuario, cerrarSesion, cierre);
-        }
     }
 }

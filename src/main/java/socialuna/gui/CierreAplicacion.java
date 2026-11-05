@@ -41,6 +41,20 @@ public class CierreAplicacion extends WindowAdapter {
      * @param padre componente sobre el que se centran las alertas (puede ser {@code null})
      */
     public void salir(Component padre) {
+        if (prepararSalida(padre)) {
+            System.exit(0);
+        }
+    }
+
+    /**
+     * Guarda todos los datos y limpia la sesión, sin terminar el programa (separado de
+     * {@link #salir} para poder probarlo).
+     *
+     * @return {@code true} si se puede terminar: el guardado funcionó, o falló y el usuario
+     *         decidió salir de todos modos. {@code false} si el usuario prefiere quedarse
+     *         (en ese caso la sesión <b>no</b> se cierra).
+     */
+    boolean prepararSalida(Component padre) {
         try {
             contexto.guardarTodo();
         } catch (PersistenciaException ex) {
@@ -50,10 +64,10 @@ public class CierreAplicacion extends WindowAdapter {
                     JOptionPane.YES_NO_OPTION,
                     JOptionPane.WARNING_MESSAGE);
             if (opcion != JOptionPane.YES_OPTION) {
-                return; // el usuario prefiere quedarse
+                return false; // el usuario prefiere quedarse
             }
         }
         Sesion.cerrar();
-        System.exit(0);
+        return true;
     }
 }
