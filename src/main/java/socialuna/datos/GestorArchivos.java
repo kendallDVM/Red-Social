@@ -16,6 +16,7 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonParseException;
 import com.google.gson.Strictness;
 
+import socialuna.modelo.Amistad;
 import socialuna.modelo.Usuario;
 
 /**
@@ -39,9 +40,9 @@ import socialuna.modelo.Usuario;
  *       original. Si el programa falla a mitad de la escritura, el archivo anterior queda intacto.</li>
  * </ul>
  *
- * <p>Estado por módulos: los usuarios ya están implementados. Amistades (Módulo 2) y
- * publicaciones (Módulo 3) tienen definidos sus archivos y su lugar en
- * {@link #cargarTodo} / {@link #guardarTodo}, pendientes de implementar.
+ * <p>Estado por módulos: usuarios (Módulo 1) y amistades (Módulo 2) ya están
+ * implementados. Publicaciones (Módulo 3) tiene definido su archivo y su lugar en
+ * {@link #cargarTodo} / {@link #guardarTodo}, pendiente de implementar.
  */
 public class GestorArchivos {
 
@@ -60,6 +61,9 @@ public class GestorArchivos {
      * y el archivo original debe conservarse (ver la descripción de la clase).
      */
     private boolean escrituraUsuariosBloqueada;
+
+    /** Igual que {@link #escrituraUsuariosBloqueada}, pero para amistades.json. */
+    private boolean escrituraAmistadesBloqueada;
 
     /** Usa la carpeta {@code data/} relativa al directorio de ejecución (la raíz del proyecto). */
     public GestorArchivos() {
@@ -186,33 +190,145 @@ public class GestorArchivos {
         escribirTextoAtomico(getRutaUsuarios(), json);
     }
 
+    // ------------------------------------------------------------------ amistades
+
+    /**
+     * Carga {@code amistades.json} en {@code destino} y reconstruye el grafo en memoria.
+     * Debe llamarse <b>después</b> de cargar los usuarios, porque los usa para validar.
+     *
+     * <p>Reglas (además de las generales de la clase):
+     * <ul>
+     *   <li>Si un ID no existe en {@code usuarios}, esa amistad se ignora sin fallar.</li>
+     *   <li>Los registros incompletos (sin IDs o de un usuario consigo mismo) se ignoran.</li>
+     *   <li>Los duplicados (A–B repetido o A–B y B–A) quedan como una sola amistad.</li>
+     * </ul>
+     * Lo ignorado desaparece del archivo la próxima vez que se guarde.
+     *
+     * @return cantidad de amistades cargadas
+     * @throws PersistenciaException si el archivo no se puede leer o no es un JSON válido.
+     *                               En ese caso {@code destino} no se modifica y se bloquea
+     *                               {@link #guardarAmistades}.
+     */
+    public int cargarAmistades(RedAmistades destino, ListaUsuarios usuarios) throws PersistenciaException {
+        Objects.requireNonNull(destino, "La red destino no puede ser nula.");
+        Objects.requireNonNull(usuarios, "La lista de usuarios no puede ser nula.");
+        try {
+            int cantidad = leerAmistadesEn(destino, usuarios);
+            escrituraAmistadesBloqueada = false;
+            return cantidad;
+        } catch (PersistenciaException e) {
+            escrituraAmistadesBloqueada = true;
+            throw e;
+        }
+    }
+
+    /**
+     * Indica si {@link #guardarAmistades} está bloqueado porque la última carga de
+     * amistades falló.
+     */
+    public boolean isEscrituraAmistadesBloqueada() {
+        return escrituraAmistadesBloqueada;
+    }
+
+    /** Lectura transaccional de amistades.json (ver {@link #cargarAmistades}). */
+    private int leerAmistadesEn(RedAmistades destino, ListaUsuarios usuarios) throws PersistenciaException {
+        Path ruta = getRutaAmistades();
+
+        crearDirectorioSiNoExiste();
+        if (Files.notExists(ruta)) {
+            escribirTexto(ruta, "[]");
+            destino.limpiar();
+            return 0;
+        }
+
+        String contenido = leerTexto(ruta);
+        if (contenido.isBlank()) {
+            destino.limpiar();
+            return 0;
+        }
+
+        Amistad[] leidas;
+        try {
+            leidas = gson.fromJson(contenido, Amistad[].class);
+        } catch (JsonParseException e) {
+            throw archivoDanado(ruta, "el contenido no es un JSON válido de amistades", e);
+        }
+
+        // Se arma primero en una red temporal; la real solo se toca si todo salió bien.
+        RedAmistades temporal = new RedAmistades();
+        if (leidas != null) {
+            for (Amistad amistad : leidas) {
+                if (esAmistadValida(amistad, usuarios)) {
+                    temporal.agregarAmistad(amistad.getIdUsuarioA(), amistad.getIdUsuarioB());
+                }
+            }
+        }
+
+        destino.limpiar();
+        for (Amistad amistad : temporal.obtenerAmistades()) {
+            destino.agregarAmistad(amistad.getIdUsuarioA(), amistad.getIdUsuarioB());
+        }
+        return destino.cantidadAmistades();
+    }
+
+    /** Un registro se acepta si está completo y ambos usuarios existen. */
+    private static boolean esAmistadValida(Amistad amistad, ListaUsuarios usuarios) {
+        if (amistad == null) {
+            return false;
+        }
+        try {
+            amistad.validar(); // IDs presentes y distintos entre sí
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+        return usuarios.existeId(amistad.getIdUsuarioA()) && usuarios.existeId(amistad.getIdUsuarioB());
+    }
+
+    /**
+     * Guarda todas las amistades en {@code amistades.json} (escritura atómica),
+     * cada una una sola vez.
+     *
+     * @throws PersistenciaException si no se puede escribir o la escritura está bloqueada
+     */
+    public void guardarAmistades(RedAmistades origen) throws PersistenciaException {
+        Objects.requireNonNull(origen, "La red origen no puede ser nula.");
+        if (escrituraAmistadesBloqueada) {
+            throw new PersistenciaException("No se guardaron las amistades: " + ARCHIVO_AMISTADES
+                    + " no se pudo cargar correctamente y se protegió para no perder sus datos."
+                    + " Revise o restaure el archivo y vuelva a abrir la aplicación.");
+        }
+        String json = gson.toJson(origen.obtenerAmistades().aArreglo(new Amistad[0]));
+        crearDirectorioSiNoExiste();
+        escribirTextoAtomico(getRutaAmistades(), json);
+    }
+
     // ------------------------------------------------------------------ todo el sistema
 
     /**
      * Carga todos los datos del sistema. Se llama una vez al iniciar la aplicación.
      *
-     * <p>Pendiente: Módulo 2 ({@code cargarAmistades}) y Módulo 3 ({@code cargarPublicaciones}).
+     * <p>Pendiente: Módulo 3 ({@code cargarPublicaciones}).
      */
     public void cargarTodo(ListaUsuarios usuarios, ListaPublicaciones publicaciones, RedAmistades amistades)
             throws PersistenciaException {
         Objects.requireNonNull(publicaciones, "La lista de publicaciones no puede ser nula.");
         Objects.requireNonNull(amistades, "La red de amistades no puede ser nula.");
         cargarUsuarios(usuarios);
-        // TODO Módulo 2 (Greivin): cargarAmistades(amistades);
+        cargarAmistades(amistades, usuarios); // después de usuarios: los necesita para validar
         // TODO Módulo 3 (Mariano): cargarPublicaciones(publicaciones);
     }
 
     /**
      * Guarda todos los datos del sistema. Se llama al cerrar sesión y al cerrar la aplicación.
      *
-     * <p>Pendiente: Módulo 2 ({@code guardarAmistades}) y Módulo 3 ({@code guardarPublicaciones}).
+     * <p>Pendiente: Módulo 3 ({@code guardarPublicaciones}).
      */
     public void guardarTodo(ListaUsuarios usuarios, ListaPublicaciones publicaciones, RedAmistades amistades)
             throws PersistenciaException {
         Objects.requireNonNull(publicaciones, "La lista de publicaciones no puede ser nula.");
         Objects.requireNonNull(amistades, "La red de amistades no puede ser nula.");
         guardarUsuarios(usuarios);
-        // TODO Módulo 2 (Greivin): guardarAmistades(amistades);
+        guardarAmistades(amistades);
         // TODO Módulo 3 (Mariano): guardarPublicaciones(publicaciones);
     }
 
@@ -266,7 +382,8 @@ public class GestorArchivos {
 
     /**
      * Respalda un archivo dañado y construye la excepción para informarlo.
-     * Si el respaldo falla, bloquea la escritura para no perder los datos originales.
+     * El bloqueo de escritura lo aplica quien llama ({@link #cargarUsuarios} o
+     * {@link #cargarAmistades}) al recibir la excepción, solo para el archivo afectado.
      */
     private PersistenciaException archivoDanado(Path ruta, String motivo, Throwable causa) {
         Path respaldo = ruta.resolveSibling(ruta.getFileName() + ".corrupto-"
@@ -276,8 +393,7 @@ public class GestorArchivos {
             Files.copy(ruta, respaldo, StandardCopyOption.REPLACE_EXISTING);
             mensaje += " Se guardó una copia en '" + respaldo.getFileName() + "'.";
         } catch (IOException e) {
-            escrituraUsuariosBloqueada = true;
-            mensaje += " No se pudo crear una copia de respaldo; se bloqueó la escritura para no perder datos.";
+            mensaje +=" No se pudo crear una copia de respaldo; se bloqueó la escritura para no perder datos.";
         }
         return new PersistenciaException(mensaje, causa);
     }
