@@ -1,0 +1,18 @@
+# Salida de compilación (Maven / IntelliJ)
+target/
+out/
+*.class
+
+# Archivos locales del IDE (la configuración compartida de .idea/ se decide en equipo)
+.idea/workspace.xml
+.idea/shelf/
+*.iws
+
+# Archivos temporales que genera GestorArchivos al escribir de forma segura
+data/*.tmp
+# Copias de respaldo de archivos dañados (son locales, no se suben)
+data/*.corrupto-*
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
