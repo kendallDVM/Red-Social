@@ -7,6 +7,11 @@ out/
 .idea/workspace.xml
 .idea/shelf/
 *.iws
+# El módulo lo genera IntelliJ desde pom.xml (Maven); no se sube para que no choque
+*.iml
+*.ipr
+.idea/modules.xml
+.idea/libraries/
 
 # Archivos temporales que genera GestorArchivos al escribir de forma segura
 data/*.tmp

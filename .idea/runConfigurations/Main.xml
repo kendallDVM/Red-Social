@@ -2,7 +2,7 @@
 <component name="ProjectRunConfigurationManager">
   <configuration default="false" factoryName="Application" name="Main">
     <option name="MAIN_CLASS_NAME" value="socialuna.Main" />
-    <module name="Red-Social" />
+    <module name="social-una" />
     <option name="PROGRAM_PARAMETERS" value="" />
     <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
     <option name="PASS_PARENT_ENVS" value="true" />
