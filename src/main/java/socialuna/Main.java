@@ -11,6 +11,7 @@ import socialuna.gui.NavegacionPrincipal;
 import socialuna.gui.VentanaAutenticada;
 import socialuna.gui.VentanaLogin;
 import socialuna.servicios.ContextoAplicacion;
+import socialuna.servicios.ServicioAmistades;
 import socialuna.servicios.ServicioAutenticacion;
 
 /**
@@ -61,11 +62,12 @@ public final class Main {
         // El servicio usa un hash ficticio precalculado: crearlo no bloquea el EDT.
         ServicioAutenticacion servicio = new ServicioAutenticacion(contexto);
         CierreAplicacion cierre = new CierreAplicacion(contexto);
+        ServicioAmistades servicioAmistades = new ServicioAmistades(contexto); // Módulo 2
 
         // TODO Módulo 3 (Mariano): reemplazar VentanaAutenticada por
         //   (usuario, cerrarSesion) -> new VentanaPrincipal(contexto, usuario, cerrarSesion, cierre).setVisible(true);
         NavegacionPrincipal navegacion = (usuario, cerrarSesion) ->
-                new VentanaAutenticada(usuario, cerrarSesion, cierre).setVisible(true);
+                new VentanaAutenticada(usuario, cerrarSesion, cierre, servicioAmistades).setVisible(true);
 
         new VentanaLogin(servicio, navegacion, cierre).mostrar(null);
     }

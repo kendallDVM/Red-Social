@@ -14,17 +14,19 @@ import javax.swing.JButton;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JTabbedPane;
 import javax.swing.WindowConstants;
 
 import socialuna.modelo.Usuario;
+import socialuna.servicios.ServicioAmistades;
 
 /**
  * Pantalla <b>temporal</b> del Módulo 1 que se muestra después de iniciar sesión.
  *
- * <p>Solo sirve para comprobar la autenticación mientras no exista la ventana principal
- * de la aplicación (responsabilidad de la integración del Módulo 3): muestra quién inició
- * sesión y permite cerrar la sesión. <b>No</b> es la ventana social definitiva y no
- * contiene funciones de otros módulos.
+ * <p>Se usa mientras no exista la ventana principal de la aplicación (responsabilidad de
+ * la integración del Módulo 3). Tiene tres pestañas: "Inicio" (quién inició sesión y
+ * cerrar sesión) y las del Módulo 2, "Buscar usuarios" y "Mis amigos". <b>No</b> es la
+ * ventana definitiva: Mariano agregará el muro en {@code VentanaPrincipal}.
  *
  * <p>Comportamiento:
  * <ul>
@@ -42,24 +44,29 @@ import socialuna.modelo.Usuario;
 public class VentanaAutenticada extends JFrame {
 
     private final Runnable cerrarSesion;
+    private final ServicioAmistades servicioAmistades;
     private final JButton botonCerrarSesion = Estilos.botonPrimario("Cerrar sesión");
 
     /**
-     * @param usuario      usuario que inició sesión
-     * @param cerrarSesion acción recibida de {@link NavegacionPrincipal}
-     * @param cierre       listener que guarda y termina la aplicación al pulsar la X
+     * @param usuario           usuario que inició sesión
+     * @param cerrarSesion      acción recibida de {@link NavegacionPrincipal}
+     * @param cierre            listener que guarda y termina la aplicación al pulsar la X
+     * @param servicioAmistades lógica del Módulo 2 para las pestañas "Buscar usuarios" y
+     *                          "Mis amigos"
      */
-    public VentanaAutenticada(Usuario usuario, Runnable cerrarSesion, WindowListener cierre) {
-        super("Social UNA - Sesión iniciada");
-        Objects.requireNonNull(usuario, "El usuario no puede ser nulo.");
+    public VentanaAutenticada(Usuario usuario, Runnable cerrarSesion, WindowListener cierre,
+                              ServicioAmistades servicioAmistades) {
+        super("Social UNA - " + Objects.requireNonNull(usuario, "El usuario no puede ser nulo.").getNombre());
         this.cerrarSesion = Objects.requireNonNull(cerrarSesion, "La acción de cerrar sesión no puede ser nula.");
+        this.servicioAmistades = Objects.requireNonNull(servicioAmistades,
+                "El servicio de amistades no puede ser nulo.");
         Objects.requireNonNull(cierre, "El listener de cierre no puede ser nulo.");
 
         setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
         addWindowListener(cierre); // X = salir de la aplicación guardando los datos
         construirInterfaz(usuario);
-        pack();
-        setResizable(false);
+        setSize(760, 600);
+        setMinimumSize(new java.awt.Dimension(620, 480));
         setLocationRelativeTo(null);
     }
 
@@ -69,6 +76,40 @@ public class VentanaAutenticada extends JFrame {
         raiz.add(Estilos.crearEncabezado("Social UNA", "Red social estudiantil de la Universidad Nacional"),
                 BorderLayout.NORTH);
 
+        JTabbedPane pestanas = new JTabbedPane();
+        pestanas.setName("pestanas");
+        pestanas.setFont(Estilos.fuente(Font.BOLD, 13));
+        pestanas.addTab("Inicio", construirInicio(usuario));
+        agregarPestanasAmistades(pestanas);
+        raiz.add(pestanas, BorderLayout.CENTER);
+
+        setContentPane(raiz);
+        getRootPane().setDefaultButton(botonCerrarSesion);
+    }
+
+    /**
+     * Módulo 2 (Greivin): pestañas "Buscar usuarios" y "Mis amigos", conectadas para que
+     * cada una se refresque cuando la otra cambia una amistad.
+     *
+     * <p>Mariano: en {@code VentanaPrincipal} se pueden crear igual que aquí.
+     */
+    private void agregarPestanasAmistades(JTabbedPane pestanas) {
+        PanelMisAmigos[] misAmigos = new PanelMisAmigos[1];
+        PanelBuscarUsuarios buscar = new PanelBuscarUsuarios(servicioAmistades, () -> misAmigos[0].refrescar());
+        misAmigos[0] = new PanelMisAmigos(servicioAmistades, buscar::refrescar);
+
+        pestanas.addTab("Buscar usuarios", buscar);
+        pestanas.addTab("Mis amigos", misAmigos[0]);
+        // Al abrir "Mis amigos" siempre se muestra la lista actual
+        pestanas.addChangeListener(e -> {
+            if (pestanas.getSelectedComponent() == misAmigos[0]) {
+                misAmigos[0].refrescar();
+            }
+        });
+    }
+
+    /** Pestaña "Inicio": saludo y botón de cerrar sesión (contenido original del Módulo 1). */
+    private JPanel construirInicio(Usuario usuario) {
         JPanel contenido = new JPanel(new GridBagLayout());
         contenido.setBackground(Estilos.TARJETA);
         contenido.setBorder(BorderFactory.createEmptyBorder(26, 32, 28, 32));
@@ -94,15 +135,13 @@ public class VentanaAutenticada extends JFrame {
 
         c.insets = new Insets(0, 0, 22, 0);
         contenido.add(Estilos.textoSecundario(
-                "Pantalla temporal de autenticación: la ventana principal se integrará aquí."), c);
+                "Usa las pestañas de arriba para buscar estudiantes y ver tus amigos."), c);
 
         botonCerrarSesion.addActionListener(e -> cerrarSesion());
         c.insets = new Insets(0, 0, 0, 0);
         contenido.add(botonCerrarSesion, c);
 
-        raiz.add(contenido, BorderLayout.CENTER);
-        setContentPane(raiz);
-        getRootPane().setDefaultButton(botonCerrarSesion);
+        return contenido;
     }
 
     /** Cierra esta ventana y delega el cierre de sesión (guardar, limpiar, volver al login). */

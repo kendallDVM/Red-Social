@@ -9,7 +9,9 @@
  *       y {@link socialuna.gui.VentanaAutenticada} (destino temporal tras el login, hasta que exista
  *       la ventana principal).</li>
  *   <li>Pendiente, Mariano: {@code VentanaPrincipal} con las pestañas Muro, Buscar y Amigos.</li>
- *   <li>Pendiente, Módulo 2 (Greivin): paneles de búsqueda y amigos.</li>
+ *   <li>Módulo 2 (Greivin): {@link socialuna.gui.PanelBuscarUsuarios} y
+ *       {@link socialuna.gui.PanelMisAmigos}, mostrados como pestañas en
+ *       {@link socialuna.gui.VentanaAutenticada}.</li>
  * </ul>
  *
  * <p>Regla de la arquitectura: las ventanas no leen ni escriben archivos directamente,
