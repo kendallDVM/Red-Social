@@ -1,14 +1,24 @@
 package socialuna.datos;
 
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.Set;
+
 import socialuna.modelo.Publicacion;
 
 /**
  * Administra las publicaciones en memoria usando una {@link ListaDinamica}.
  *
- * <p>Solo incluye las operaciones generales (agregar, consultar, eliminar). La lógica
- * del muro (filtrar por autor o por amigos, ordenar por fecha) corresponde al Módulo 3.
+ * <p>Además de las operaciones generales (agregar, consultar, eliminar), ofrece las
+ * consultas del muro: filtrar por autores y ordenar de la más reciente a la más antigua.
+ * La lista interna conserva el <b>orden de publicación</b>; el orden del muro se calcula
+ * en cada consulta y no altera ese historial.
  */
 public class ListaPublicaciones {
+
+    /** Prefijo de los IDs generados automáticamente ({@code P1}, {@code P2}, ...). */
+    public static final String PREFIJO_ID = "P";
 
     private final ListaDinamica<Publicacion> publicaciones;
 
@@ -56,6 +66,69 @@ public class ListaPublicaciones {
     public boolean eliminarPorId(String id) {
         Publicacion p = buscarPorId(id);
         return p != null && publicaciones.eliminarElemento(p);
+    }
+
+    /**
+     * Genera un ID que no existe todavía: {@code P} seguido del mayor número usado + 1.
+     * Los IDs que no siguen ese formato (por ejemplo, de un archivo editado a mano) se
+     * ignoran al calcular el número, pero nunca se repiten.
+     */
+    public String generarId() {
+        long mayor = 0;
+        for (Publicacion p : publicaciones) {
+            String id = p.getId();
+            if (id.startsWith(PREFIJO_ID)) {
+                try {
+                    mayor = Math.max(mayor, Long.parseLong(id.substring(PREFIJO_ID.length())));
+                } catch (NumberFormatException e) {
+                    // ID con otro formato: no cuenta para la numeración
+                }
+            }
+        }
+        String id = PREFIJO_ID + (mayor + 1);
+        while (existeId(id)) { // seguridad extra ante IDs desbordados o raros
+            mayor++;
+            id = PREFIJO_ID + (mayor + 1);
+        }
+        return id;
+    }
+
+    /**
+     * Publicaciones cuyo autor está en {@code idsAutores}, ordenadas de la <b>más reciente a
+     * la más antigua</b>. Si dos tienen la misma fecha y hora, la publicada después aparece primero.
+     *
+     * <p>Costo: O(n) para filtrar (los IDs se buscan en un conjunto hash) más O(k log k)
+     * para ordenar las k publicaciones que quedaron.
+     *
+     * @param idsAutores IDs de los autores a incluir; si es {@code null} o está vacía, el resultado es vacío
+     */
+    public ListaDinamica<Publicacion> obtenerRecientesDe(ListaDinamica<String> idsAutores) {
+        ListaDinamica<Publicacion> resultado = new ListaDinamica<>();
+        if (idsAutores == null || idsAutores.estaVacia()) {
+            return resultado;
+        }
+        Set<String> autores = new HashSet<>();
+        for (String id : idsAutores) {
+            autores.add(id);
+        }
+
+        // Se arma en orden inverso de publicación y luego se ordena con un algoritmo
+        // estable: los empates de fecha quedan con la publicación más nueva primero.
+        Publicacion[] filtradas = new Publicacion[publicaciones.tamano()];
+        int cantidad = 0;
+        for (int i = publicaciones.tamano() - 1; i >= 0; i--) {
+            Publicacion p = publicaciones.obtener(i);
+            if (autores.contains(p.getIdAutor())) {
+                filtradas[cantidad++] = p;
+            }
+        }
+        Publicacion[] ordenadas = Arrays.copyOf(filtradas, cantidad);
+        // El formato yyyy-MM-dd HH:mm:ss se ordena igual como texto que como fecha
+        Arrays.sort(ordenadas, Comparator.comparing(Publicacion::getFechaHora).reversed());
+        for (Publicacion p : ordenadas) {
+            resultado.agregar(p);
+        }
+        return resultado;
     }
 
     /** Devuelve una copia de la lista; modificarla no altera los datos internos. */
