@@ -17,6 +17,7 @@ import com.google.gson.JsonParseException;
 import com.google.gson.Strictness;
 
 import socialuna.modelo.Amistad;
+import socialuna.modelo.Publicacion;
 import socialuna.modelo.Usuario;
 
 /**
@@ -40,9 +41,8 @@ import socialuna.modelo.Usuario;
  *       original. Si el programa falla a mitad de la escritura, el archivo anterior queda intacto.</li>
  * </ul>
  *
- * <p>Estado por módulos: usuarios (Módulo 1) y amistades (Módulo 2) ya están
- * implementados. Publicaciones (Módulo 3) tiene definido su archivo y su lugar en
- * {@link #cargarTodo} / {@link #guardarTodo}, pendiente de implementar.
+ * <p>Estado por módulos: usuarios (Módulo 1), amistades (Módulo 2) y publicaciones
+ * (Módulo 3) están implementados; los tres siguen las mismas reglas de seguridad.
  */
 public class GestorArchivos {
 
@@ -64,6 +64,9 @@ public class GestorArchivos {
 
     /** Igual que {@link #escrituraUsuariosBloqueada}, pero para amistades.json. */
     private boolean escrituraAmistadesBloqueada;
+
+    /** Igual que {@link #escrituraUsuariosBloqueada}, pero para publicaciones.json. */
+    private boolean escrituraPublicacionesBloqueada;
 
     /** Usa la carpeta {@code data/} relativa al directorio de ejecución (la raíz del proyecto). */
     public GestorArchivos() {
@@ -302,12 +305,124 @@ public class GestorArchivos {
         escribirTextoAtomico(getRutaAmistades(), json);
     }
 
+    // ------------------------------------------------------------------ publicaciones
+
+    /**
+     * Carga {@code publicaciones.json} en {@code destino} y reconstruye el historial en
+     * memoria. Debe llamarse <b>después</b> de cargar los usuarios, porque los usa para
+     * validar al autor.
+     *
+     * <p>Reglas (además de las generales de la clase):
+     * <ul>
+     *   <li>Si el autor no existe en {@code usuarios}, esa publicación se ignora sin fallar.</li>
+     *   <li>Los registros incompletos o con fecha inválida se ignoran.</li>
+     *   <li>Si un ID se repite, solo se conserva la primera publicación con ese ID.</li>
+     * </ul>
+     * Lo ignorado desaparece del archivo la próxima vez que se guarde.
+     *
+     * @return cantidad de publicaciones cargadas
+     * @throws PersistenciaException si el archivo no se puede leer o no es un JSON válido.
+     *                               En ese caso {@code destino} no se modifica y se bloquea
+     *                               {@link #guardarPublicaciones}.
+     */
+    public int cargarPublicaciones(ListaPublicaciones destino, ListaUsuarios usuarios) throws PersistenciaException {
+        Objects.requireNonNull(destino, "La lista de publicaciones no puede ser nula.");
+        Objects.requireNonNull(usuarios, "La lista de usuarios no puede ser nula.");
+        try {
+            int cantidad = leerPublicacionesEn(destino, usuarios);
+            escrituraPublicacionesBloqueada = false;
+            return cantidad;
+        } catch (PersistenciaException e) {
+            escrituraPublicacionesBloqueada = true;
+            throw e;
+        }
+    }
+
+    /**
+     * Indica si {@link #guardarPublicaciones} está bloqueado porque la última carga de
+     * publicaciones falló.
+     */
+    public boolean isEscrituraPublicacionesBloqueada() {
+        return escrituraPublicacionesBloqueada;
+    }
+
+    /** Lectura transaccional de publicaciones.json (ver {@link #cargarPublicaciones}). */
+    private int leerPublicacionesEn(ListaPublicaciones destino, ListaUsuarios usuarios) throws PersistenciaException {
+        Path ruta = getRutaPublicaciones();
+
+        crearDirectorioSiNoExiste();
+        if (Files.notExists(ruta)) {
+            escribirTexto(ruta, "[]");
+            destino.limpiar();
+            return 0;
+        }
+
+        String contenido = leerTexto(ruta);
+        if (contenido.isBlank()) {
+            destino.limpiar();
+            return 0;
+        }
+
+        Publicacion[] leidas;
+        try {
+            leidas = gson.fromJson(contenido, Publicacion[].class);
+        } catch (JsonParseException e) {
+            throw archivoDanado(ruta, "el contenido no es un JSON válido de publicaciones", e);
+        }
+
+        // Se arma primero en una lista temporal; la real solo se toca si todo salió bien.
+        ListaPublicaciones temporal = new ListaPublicaciones();
+        if (leidas != null) {
+            for (Publicacion publicacion : leidas) {
+                if (esPublicacionValida(publicacion, usuarios) && !temporal.existeId(publicacion.getId())) {
+                    temporal.agregar(publicacion);
+                }
+            }
+        }
+
+        destino.limpiar();
+        for (Publicacion publicacion : temporal.obtenerTodas()) {
+            destino.agregar(publicacion);
+        }
+        return destino.tamano();
+    }
+
+    /** Una publicación se acepta si está completa y su autor existe. */
+    private static boolean esPublicacionValida(Publicacion publicacion, ListaUsuarios usuarios) {
+        if (publicacion == null) {
+            return false;
+        }
+        try {
+            publicacion.validar(); // ID, autor, texto y fecha válidos
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+        return usuarios.existeId(publicacion.getIdAutor());
+    }
+
+    /**
+     * Guarda todo el historial en {@code publicaciones.json} (escritura atómica, UTF-8),
+     * en el orden en que se publicaron.
+     *
+     * @throws PersistenciaException si no se puede escribir o la escritura está bloqueada
+     */
+    public void guardarPublicaciones(ListaPublicaciones origen) throws PersistenciaException {
+        Objects.requireNonNull(origen, "La lista de publicaciones no puede ser nula.");
+        if (escrituraPublicacionesBloqueada) {
+            throw new PersistenciaException("No se guardaron las publicaciones: " + ARCHIVO_PUBLICACIONES
+                    + " no se pudo cargar correctamente y se protegió para no perder sus datos."
+                    + " Revise o restaure el archivo y vuelva a abrir la aplicación.");
+        }
+        String json = gson.toJson(origen.obtenerTodas().aArreglo(new Publicacion[0]));
+        crearDirectorioSiNoExiste();
+        escribirTextoAtomico(getRutaPublicaciones(), json);
+    }
+
     // ------------------------------------------------------------------ todo el sistema
 
     /**
      * Carga todos los datos del sistema. Se llama una vez al iniciar la aplicación.
-     *
-     * <p>Pendiente: Módulo 3 ({@code cargarPublicaciones}).
+     * Orden: usuarios, amistades y publicaciones (las dos últimas validan contra los usuarios).
      */
     public void cargarTodo(ListaUsuarios usuarios, ListaPublicaciones publicaciones, RedAmistades amistades)
             throws PersistenciaException {
@@ -315,21 +430,17 @@ public class GestorArchivos {
         Objects.requireNonNull(amistades, "La red de amistades no puede ser nula.");
         cargarUsuarios(usuarios);
         cargarAmistades(amistades, usuarios); // después de usuarios: los necesita para validar
-        // TODO Módulo 3 (Mariano): cargarPublicaciones(publicaciones);
+        cargarPublicaciones(publicaciones, usuarios);
     }
 
-    /**
-     * Guarda todos los datos del sistema. Se llama al cerrar sesión y al cerrar la aplicación.
-     *
-     * <p>Pendiente: Módulo 3 ({@code guardarPublicaciones}).
-     */
+    /** Guarda todos los datos del sistema. Se llama al cerrar sesión y al cerrar la aplicación. */
     public void guardarTodo(ListaUsuarios usuarios, ListaPublicaciones publicaciones, RedAmistades amistades)
             throws PersistenciaException {
         Objects.requireNonNull(publicaciones, "La lista de publicaciones no puede ser nula.");
         Objects.requireNonNull(amistades, "La red de amistades no puede ser nula.");
         guardarUsuarios(usuarios);
         guardarAmistades(amistades);
-        // TODO Módulo 3 (Mariano): guardarPublicaciones(publicaciones);
+        guardarPublicaciones(publicaciones);
     }
 
     // ------------------------------------------------------------------ utilidades de archivos
