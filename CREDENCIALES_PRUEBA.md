@@ -14,4 +14,3 @@ Notas:
 - El sistema **no guarda las contraseñas en texto plano**. En `data/usuarios.json`, el campo `contrasena` contiene solo un hash **BCrypt** (costo 12) con sal aleatoria. Las contraseñas de esta tabla no aparecen en ningún otro archivo del proyecto.
 - Al iniciar sesión, el nombre de usuario **no distingue mayúsculas** (`Kendall` = `kendall`). La contraseña **sí** las distingue.
 - Las tres cuentas se crearon con el propio servicio de registro de la aplicación (`ServicioAutenticacion.registrar`), que usa la biblioteca BCrypt del proyecto.
-- El archivo también conserva la cuenta preexistente `david12` (ID `1234`). Su contraseña no está documentada.

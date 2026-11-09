@@ -33,6 +33,7 @@ import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
+import javax.swing.text.DefaultCaret;
 
 import socialuna.datos.ListaDinamica;
 import socialuna.modelo.Publicacion;
@@ -244,6 +245,8 @@ public class PanelMuro extends JPanel {
         lblResumen.setText(cantidad == 1 ? "1 publicación" : cantidad + " publicaciones");
         lista.revalidate();
         lista.repaint();
+        // Lo más reciente está arriba: el muro siempre se muestra desde el inicio
+        SwingUtilities.invokeLater(() -> desplazamiento.getVerticalScrollBar().setValue(0));
     }
 
     // ------------------------------------------------------------------ tarjetas
@@ -290,6 +293,8 @@ public class PanelMuro extends JPanel {
         texto.setFont(Estilos.fuente(Font.PLAIN, 14));
         texto.setForeground(Estilos.TEXTO);
         texto.setBorder(BorderFactory.createEmptyBorder());
+        // Sin esto, el cursor interno del texto hace que el muro se desplace solo hacia abajo
+        ((DefaultCaret) texto.getCaret()).setUpdatePolicy(DefaultCaret.NEVER_UPDATE);
 
         JPanel tarjeta = new JPanel(new BorderLayout(0, 6));
         tarjeta.setName("publicacion-" + publicacion.getId());
