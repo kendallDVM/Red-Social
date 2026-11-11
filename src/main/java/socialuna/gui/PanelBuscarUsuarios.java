@@ -3,9 +3,11 @@ package socialuna.gui;
 import java.awt.BorderLayout;
 import java.awt.FlowLayout;
 import java.awt.Font;
+import java.awt.GridLayout;
 import java.util.Objects;
 
 import javax.swing.BorderFactory;
+import javax.swing.Box;
 import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
@@ -18,18 +20,31 @@ import javax.swing.table.DefaultTableModel;
 
 import socialuna.datos.ListaDinamica;
 import socialuna.modelo.Usuario;
+import socialuna.servicios.EstadoAmistad;
 import socialuna.servicios.ResultadoAmistad;
 import socialuna.servicios.ServicioAmistades;
 import socialuna.servicios.Sesion;
+import socialuna.servicios.UsuarioEncontrado;
 
 /**
  * Pestaña "Buscar usuarios" del Módulo 2.
  *
- * <p>Permite buscar estudiantes registrados por nombre o nombre de usuario y agregar al
- * seleccionado como amigo. Toda la lógica está en {@link ServicioAmistades}; este panel
- * solo recoge los datos y muestra los resultados y las alertas.
+ * <p>Permite buscar estudiantes registrados por nombre o nombre de usuario. Cada
+ * resultado muestra su relación con el usuario activo (columna "Estado"). Justo debajo
+ * del buscador hay una <b>barra de acción</b> con el usuario seleccionado, su estado y el
+ * botón que corresponde. Está arriba, y no al pie del panel, para que siga visible aunque
+ * la ventana sea más baja que la pantalla: si falta espacio, lo que se reduce es la tabla.
  *
- * <p>Es un {@code JPanel} para poder colocarlo como pestaña en la ventana principal.
+ * <table>
+ *   <caption>Acción según el estado</caption>
+ *   <tr><td>No son amigos</td><td>Enviar solicitud</td></tr>
+ *   <tr><td>Solicitud enviada (pendiente)</td><td>Cancelar solicitud</td></tr>
+ *   <tr><td>Te envió una solicitud</td><td>Aceptar / Rechazar</td></tr>
+ *   <tr><td>Ya son amigos / Es tu cuenta</td><td>ninguna (botón deshabilitado)</td></tr>
+ * </table>
+ *
+ * <p>Toda la lógica está en {@link ServicioAmistades}; este panel solo recoge los datos y
+ * muestra los resultados y las alertas.
  */
 public class PanelBuscarUsuarios extends JPanel {
 
@@ -42,8 +57,15 @@ public class PanelBuscarUsuarios extends JPanel {
 
     private final JTextField campoBusqueda = Estilos.campoTexto(24);
     private final JButton botonBuscar = Estilos.botonPrimario("Buscar");
-    private final JButton botonAgregar = Estilos.botonPrimario("Agregar como amigo");
+    /** Acción principal; su texto cambia según el estado del usuario seleccionado. */
+    private final JButton botonAccion = Estilos.botonPrimario("Enviar solicitud");
+    /** Solo se muestra cuando el usuario seleccionado le envió una solicitud al usuario activo. */
+    private final JButton botonRechazar = Estilos.botonSecundario("Rechazar");
     private final JLabel lblResumen = Estilos.textoSecundario(" ");
+    /** Nombre del usuario seleccionado, en la barra de acción. */
+    private final JLabel lblSeleccionado = new JLabel(" ");
+    /** Explicación del estado del usuario seleccionado, en la barra de acción. */
+    private final JLabel lblEstadoSeleccionado = Estilos.textoSecundario(" ");
 
     /** Modelo de la tabla: las celdas no se pueden editar. */
     private final DefaultTableModel modelo = new DefaultTableModel(COLUMNAS, 0) {
@@ -54,18 +76,22 @@ public class PanelBuscarUsuarios extends JPanel {
     };
     private final JTable tabla = new JTable(modelo);
 
-    /** Último texto buscado, para refrescar la tabla después de agregar un amigo. */
+    /** Resultados mostrados, en el mismo orden que las filas de la tabla. */
+    private ListaDinamica<UsuarioEncontrado> resultados = new ListaDinamica<>();
+
+    /** Último texto buscado, para refrescar la tabla después de un cambio. */
     private String ultimaBusqueda = "";
 
     /**
      * @param servicio        lógica de amistades
-     * @param alCambiarAmigos se ejecuta después de agregar un amigo (por ejemplo, para
-     *                        refrescar la pestaña "Mis amigos"); puede ser {@code null}
+     * @param alCambiarAmigos se ejecuta después de cambiar una solicitud o amistad (por
+     *                        ejemplo, para refrescar las otras pestañas); puede ser {@code null}
      */
     public PanelBuscarUsuarios(ServicioAmistades servicio, Runnable alCambiarAmigos) {
         this.servicio = Objects.requireNonNull(servicio, "El servicio no puede ser nulo.");
         this.alCambiarAmigos = alCambiarAmigos != null ? alCambiarAmigos : () -> { };
         construirInterfaz();
+        actualizarBotones();
     }
 
     private void construirInterfaz() {
@@ -79,7 +105,8 @@ public class PanelBuscarUsuarios extends JPanel {
         JPanel titulos = new JPanel(new BorderLayout(0, 2));
         titulos.setOpaque(false);
         titulos.add(Estilos.titulo("Buscar usuarios"), BorderLayout.NORTH);
-        titulos.add(Estilos.textoSecundario("Escribe parte del nombre o del usuario del estudiante."),
+        titulos.add(Estilos.textoSecundario(
+                "Escribe parte del nombre o del usuario. Selecciona un resultado para enviarle una solicitud."),
                 BorderLayout.SOUTH);
         superior.add(titulos, BorderLayout.NORTH);
 
@@ -88,7 +115,8 @@ public class PanelBuscarUsuarios extends JPanel {
         campoBusqueda.setName("campoBusqueda");
         buscador.add(campoBusqueda, BorderLayout.CENTER);
         buscador.add(botonBuscar, BorderLayout.EAST);
-        superior.add(buscador, BorderLayout.SOUTH);
+        superior.add(buscador, BorderLayout.CENTER);
+        superior.add(construirBarraAccion(), BorderLayout.SOUTH);
         add(superior, BorderLayout.NORTH);
 
         // ---- centro: tabla de resultados
@@ -103,20 +131,53 @@ public class PanelBuscarUsuarios extends JPanel {
         desplazamiento.setBorder(BorderFactory.createLineBorder(Estilos.BORDE));
         add(desplazamiento, BorderLayout.CENTER);
 
-        // ---- parte inferior: resumen y botón agregar
-        JPanel inferior = new JPanel(new BorderLayout());
-        inferior.setOpaque(false);
-        inferior.add(lblResumen, BorderLayout.WEST);
-        JPanel botones = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
-        botones.setOpaque(false);
-        botones.add(botonAgregar);
-        inferior.add(botones, BorderLayout.EAST);
-        add(inferior, BorderLayout.SOUTH);
+        // ---- parte inferior: cantidad de resultados
+        lblResumen.setName("resumenBusqueda");
+        add(lblResumen, BorderLayout.SOUTH);
 
         // ---- acciones
         botonBuscar.addActionListener(e -> buscar());
         campoBusqueda.addActionListener(e -> buscar()); // Enter en el cuadro de texto
-        botonAgregar.addActionListener(e -> agregarSeleccionado());
+        botonAccion.addActionListener(e -> ejecutarAccionPrincipal());
+        botonRechazar.addActionListener(e -> rechazarSeleccionado());
+        tabla.getSelectionModel().addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) {
+                actualizarBotones();
+            }
+        });
+    }
+
+    /**
+     * Barra con el usuario seleccionado, su estado y los botones de acción
+     * ("Enviar solicitud", "Cancelar solicitud", "Aceptar solicitud" + "Rechazar").
+     */
+    private JPanel construirBarraAccion() {
+        JPanel barra = new JPanel(new BorderLayout(12, 0));
+        barra.setName("barraAccion");
+        barra.setBackground(Estilos.FONDO);
+        barra.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(Estilos.BORDE, 1, true),
+                BorderFactory.createEmptyBorder(10, 14, 10, 14)));
+
+        JPanel textos = new JPanel(new GridLayout(2, 1, 0, 2));
+        textos.setOpaque(false);
+        lblSeleccionado.setName("lblSeleccionado");
+        lblSeleccionado.setFont(Estilos.fuente(Font.BOLD, 14));
+        lblSeleccionado.setForeground(Estilos.TEXTO);
+        lblEstadoSeleccionado.setName("lblEstadoSeleccionado");
+        textos.add(lblSeleccionado);
+        textos.add(lblEstadoSeleccionado);
+        barra.add(textos, BorderLayout.CENTER);
+
+        JPanel botones = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        botones.setOpaque(false);
+        botonRechazar.setName("botonRechazar");
+        botonAccion.setName("botonAccion");
+        botones.add(botonRechazar);
+        botones.add(Box.createHorizontalStrut(8));
+        botones.add(botonAccion);
+        barra.add(botones, BorderLayout.EAST);
+        return barra;
     }
 
     // ------------------------------------------------------------------ acciones
@@ -130,29 +191,65 @@ public class PanelBuscarUsuarios extends JPanel {
             return;
         }
         ultimaBusqueda = texto;
-        int encontrados = mostrarResultados(texto);
+        int encontrados = mostrarResultados(texto, null);
         if (encontrados == 0) {
             JOptionPane.showMessageDialog(this, "No se encontraron usuarios que coincidan con \""
                     + texto.strip() + "\".", TITULO_ALERTA, JOptionPane.INFORMATION_MESSAGE);
         }
     }
 
-    private void agregarSeleccionado() {
-        Usuario activo = Sesion.getUsuarioActivo();
-        int fila = tabla.getSelectedRow();
-        if (fila < 0) {
+    /** Ejecuta la acción que corresponde al estado del usuario seleccionado. */
+    private void ejecutarAccionPrincipal() {
+        UsuarioEncontrado seleccionado = seleccionado();
+        if (seleccionado == null) {
             JOptionPane.showMessageDialog(this, "Seleccione un usuario de la lista.",
                     TITULO_ALERTA, JOptionPane.WARNING_MESSAGE);
             return;
         }
-        String idSeleccionado = (String) modelo.getValueAt(fila, COLUMNA_ID);
-        ResultadoAmistad resultado = servicio.agregarAmigo(activo == null ? null : activo.getId(), idSeleccionado);
+        String idActivo = idActivo();
+        String idOtro = seleccionado.getUsuario().getId();
+        switch (seleccionado.getEstado()) {
+            case SIN_RELACION:
+                mostrarResultado(servicio.enviarSolicitud(idActivo, idOtro), "Solicitud enviada", idOtro);
+                break;
+            case SOLICITUD_ENVIADA:
+                if (confirmar("¿Desea cancelar la solicitud enviada a " + seleccionado.getUsuario().getNombre() + "?",
+                        "Cancelar solicitud")) {
+                    mostrarResultado(servicio.cancelarSolicitud(idActivo, idOtro), "Solicitud cancelada", idOtro);
+                }
+                break;
+            case SOLICITUD_RECIBIDA:
+                mostrarResultado(servicio.aceptarSolicitud(idActivo, idOtro), "Solicitud aceptada", idOtro);
+                break;
+            default:
+                // AMIGOS, PROPIA_CUENTA o USUARIO_NO_EXISTE: el botón está deshabilitado.
+                break;
+        }
+    }
 
+    private void rechazarSeleccionado() {
+        UsuarioEncontrado seleccionado = seleccionado();
+        if (seleccionado == null || seleccionado.getEstado() != EstadoAmistad.SOLICITUD_RECIBIDA) {
+            return;
+        }
+        if (confirmar("¿Desea rechazar la solicitud de " + seleccionado.getUsuario().getNombre() + "?",
+                "Rechazar solicitud")) {
+            String idOtro = seleccionado.getUsuario().getId();
+            mostrarResultado(servicio.rechazarSolicitud(idActivo(), idOtro), "Solicitud rechazada", idOtro);
+        }
+    }
+
+    /**
+     * Muestra el mensaje del resultado y vuelve a buscar, para que la columna "Estado"
+     * refleje los datos actuales (aunque la operación haya fallado porque otra instancia
+     * del programa cambió algo).
+     */
+    private void mostrarResultado(ResultadoAmistad resultado, String tituloExito, String idSeleccionar) {
+        mostrarResultados(ultimaBusqueda, idSeleccionar);
         if (resultado.esExitoso()) {
-            JOptionPane.showMessageDialog(this, resultado.getMensaje(), "Amigo agregado",
-                    JOptionPane.INFORMATION_MESSAGE);
-            mostrarResultados(ultimaBusqueda); // actualiza la columna "Estado"
             alCambiarAmigos.run();
+            JOptionPane.showMessageDialog(this, resultado.getMensaje(), tituloExito,
+                    JOptionPane.INFORMATION_MESSAGE);
             return;
         }
         int icono = resultado.getTipo() == ResultadoAmistad.Tipo.ERROR_PERSISTENCIA
@@ -162,27 +259,118 @@ public class PanelBuscarUsuarios extends JPanel {
 
     /**
      * Vuelve a ejecutar la última búsqueda (si hubo una) para actualizar la columna
-     * "Estado". Lo puede llamar la pestaña "Mis amigos" al eliminar un amigo.
+     * "Estado", conservando la fila seleccionada. Lo llaman las otras pestañas y la
+     * ventana principal al cambiar de pestaña.
      */
     public void refrescar() {
         if (!ultimaBusqueda.isBlank()) {
-            mostrarResultados(ultimaBusqueda);
+            UsuarioEncontrado actual = seleccionado();
+            mostrarResultados(ultimaBusqueda, actual == null ? null : actual.getUsuario().getId());
         }
     }
 
-    /** Llena la tabla con los resultados de la búsqueda y devuelve cuántos hay. */
-    private int mostrarResultados(String texto) {
-        Usuario activo = Sesion.getUsuarioActivo();
-        String idActivo = activo == null ? null : activo.getId();
-
+    /**
+     * Llena la tabla con los resultados de la búsqueda y devuelve cuántos hay.
+     *
+     * @param idSeleccionar usuario que debe quedar seleccionado; si es {@code null} o ya no
+     *                      aparece, se selecciona la primera fila
+     */
+    private int mostrarResultados(String texto, String idSeleccionar) {
+        resultados = servicio.buscarConEstado(idActivo(), texto);
         modelo.setRowCount(0);
-        ListaDinamica<Usuario> resultados = servicio.buscarUsuarios(idActivo, texto);
-        for (Usuario usuario : resultados) {
-            String estado = servicio.sonAmigos(idActivo, usuario.getId()) ? "Ya es tu amigo" : "";
-            modelo.addRow(new Object[] {usuario.getNombre(), "@" + usuario.getUsuario(), usuario.getId(), estado});
+        int filaASeleccionar = 0;
+        for (int i = 0; i < resultados.tamano(); i++) {
+            UsuarioEncontrado r = resultados.obtener(i);
+            Usuario usuario = r.getUsuario();
+            modelo.addRow(new Object[] {usuario.getNombre(), "@" + usuario.getUsuario(), usuario.getId(),
+                    r.getEstado().getDescripcion()});
+            if (usuario.getId().equals(idSeleccionar)) {
+                filaASeleccionar = i;
+            }
         }
         int cantidad = resultados.tamano();
-        lblResumen.setText(cantidad == 1 ? "1 usuario encontrado" : cantidad + " usuarios encontrados");
+        if (cantidad > 0) {
+            tabla.setRowSelectionInterval(filaASeleccionar, filaASeleccionar);
+        }
+        lblResumen.setText(cantidad == 0 ? "No se encontraron usuarios"
+                : cantidad == 1 ? "1 usuario encontrado" : cantidad + " usuarios encontrados");
+        actualizarBotones();
         return cantidad;
+    }
+
+    /** Ajusta texto, habilitación y visibilidad de los botones según la fila seleccionada. */
+    private void actualizarBotones() {
+        UsuarioEncontrado sel = seleccionado();
+        botonRechazar.setVisible(false);
+        if (sel == null) {
+            lblSeleccionado.setText(resultados.estaVacia()
+                    ? "Busca un usuario para ver las acciones disponibles."
+                    : "Selecciona un usuario de la lista.");
+            lblEstadoSeleccionado.setText(" ");
+            configurarAccion("Enviar solicitud", false, "Busque y seleccione un usuario.");
+            return;
+        }
+        Usuario usuario = sel.getUsuario();
+        lblSeleccionado.setText(usuario.getNombre() + "  (@" + usuario.getUsuario() + ")");
+        switch (sel.getEstado()) {
+            case SIN_RELACION:
+                lblEstadoSeleccionado.setText("No son amigos. Envíale una solicitud de amistad.");
+                configurarAccion("Enviar solicitud", true, "Enviar una solicitud de amistad.");
+                break;
+            case SOLICITUD_ENVIADA:
+                lblEstadoSeleccionado.setText("Solicitud enviada. Esperando a que la acepte o la rechace.");
+                configurarAccion("Cancelar solicitud", true, "Su solicitud sigue pendiente.");
+                break;
+            case SOLICITUD_RECIBIDA:
+                lblEstadoSeleccionado.setText("Te envió una solicitud de amistad.");
+                configurarAccion("Aceptar", true, "Aceptar la solicitud: serán amigos.");
+                botonRechazar.setVisible(true);
+                break;
+            case AMIGOS:
+                lblEstadoSeleccionado.setText("Ya son amigos.");
+                configurarAccion("Ya son amigos", false, "Ya son amigos.");
+                break;
+            case PROPIA_CUENTA:
+                lblEstadoSeleccionado.setText("Es tu cuenta. No puedes enviarte una solicitud.");
+                configurarAccion("Es tu cuenta", false, "No puede enviarse una solicitud a sí mismo.");
+                break;
+            default:
+                lblEstadoSeleccionado.setText("El usuario ya no está registrado.");
+                configurarAccion("Enviar solicitud", false, "El usuario ya no está registrado.");
+                break;
+        }
+    }
+
+    /**
+     * Ajusta el botón principal. Deshabilitado se pinta en gris (estilo secundario) para
+     * que no parezca una acción disponible; habilitado, con el color principal.
+     */
+    private void configurarAccion(String texto, boolean habilitado, String ayuda) {
+        botonAccion.setText(texto);
+        botonAccion.setEnabled(habilitado);
+        botonAccion.setToolTipText(ayuda);
+        botonAccion.setBackground(habilitado ? Estilos.PRIMARIO : Estilos.SECUNDARIO);
+        botonAccion.setForeground(habilitado ? java.awt.Color.WHITE : Estilos.TEXTO_SECUNDARIO);
+    }
+
+    /** Resultado de la fila seleccionada, o {@code null} si no hay selección. */
+    private UsuarioEncontrado seleccionado() {
+        int fila = tabla.getSelectedRow();
+        if (fila < 0 || fila >= resultados.tamano()) {
+            return null;
+        }
+        UsuarioEncontrado r = resultados.obtener(fila);
+        // Comprobación defensiva: la fila y la lista deben corresponder al mismo usuario.
+        return r.getUsuario().getId().equals(modelo.getValueAt(fila, COLUMNA_ID)) ? r : null;
+    }
+
+    private boolean confirmar(String mensaje, String titulo) {
+        return JOptionPane.showConfirmDialog(this, mensaje, titulo, JOptionPane.YES_NO_OPTION,
+                JOptionPane.QUESTION_MESSAGE) == JOptionPane.YES_OPTION;
+    }
+
+    private static String idActivo() {
+        Usuario activo = Sesion.getUsuarioActivo();
+        return activo == null ? null : activo.getId();
     }
 }

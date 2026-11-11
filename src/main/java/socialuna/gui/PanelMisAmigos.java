@@ -71,7 +71,7 @@ public class PanelMisAmigos extends JPanel {
         JPanel titulos = new JPanel(new BorderLayout(0, 2));
         titulos.setOpaque(false);
         titulos.add(Estilos.titulo("Mis amigos"), BorderLayout.NORTH);
-        titulos.add(Estilos.textoSecundario("Estudiantes que agregaste como amigos. Ves sus publicaciones en el muro."),
+        titulos.add(Estilos.textoSecundario("Estudiantes que aceptaron tu solicitud o cuya solicitud aceptaste. Ves sus publicaciones en el muro."),
                 BorderLayout.SOUTH);
         add(titulos, BorderLayout.NORTH);
 
@@ -101,8 +101,12 @@ public class PanelMisAmigos extends JPanel {
         botonEliminar.addActionListener(e -> eliminarSeleccionado());
     }
 
-    /** Vuelve a cargar la lista de amigos del usuario activo desde memoria. */
+    /**
+     * Vuelve a cargar la lista de amigos del usuario activo. Antes relee el disco, para
+     * mostrar también las solicitudes aceptadas desde otra instancia del programa.
+     */
     public final void refrescar() {
+        servicio.actualizarDesdeDisco();
         Usuario activo = Sesion.getUsuarioActivo();
         modelo.setRowCount(0);
         if (activo == null) {
@@ -115,7 +119,7 @@ public class PanelMisAmigos extends JPanel {
         }
         int cantidad = amigos.tamano();
         if (cantidad == 0) {
-            lblResumen.setText("Aún no tienes amigos. Búscalos en la pestaña \"Buscar usuarios\".");
+            lblResumen.setText("Aún no tienes amigos. Envía solicitudes desde la pestaña \"Buscar usuarios\".");
         } else {
             lblResumen.setText(cantidad == 1 ? "Tienes 1 amigo" : "Tienes " + cantidad + " amigos");
         }

@@ -4,6 +4,8 @@ import java.awt.BorderLayout;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
+import java.awt.GraphicsEnvironment;
+import java.awt.Rectangle;
 import java.awt.event.WindowListener;
 import java.util.Objects;
 
@@ -26,7 +28,9 @@ import socialuna.servicios.ServicioPublicaciones;
  * <p>Reúne los tres módulos en pestañas:
  * <ul>
  *   <li><b>Muro</b> (Módulo 3): publicar y ver el muro general o "Mi muro".</li>
- *   <li><b>Buscar usuarios</b> (Módulo 2): buscar estudiantes y agregarlos como amigos.</li>
+ *   <li><b>Buscar usuarios</b> (Módulo 2): buscar estudiantes y enviarles una solicitud de amistad.</li>
+ *   <li><b>Solicitudes</b> (Módulo 2): aceptar o rechazar las solicitudes recibidas y ver
+ *       las enviadas. El título de la pestaña muestra cuántas hay recibidas.</li>
  *   <li><b>Mis amigos</b> (Módulo 2): lista de amigos del usuario activo.</li>
  * </ul>
  * El saludo con el nombre del usuario y el botón "Cerrar sesión" están siempre visibles
@@ -52,6 +56,8 @@ public class VentanaPrincipal extends JFrame {
     private PanelMuro panelMuro;
     private PanelBuscarUsuarios panelBuscar;
     private PanelMisAmigos panelAmigos;
+    private PanelSolicitudes panelSolicitudes;
+    private JTabbedPane pestanas;
 
     /**
      * @param contexto     estructuras de datos compartidas de la aplicación
@@ -69,8 +75,12 @@ public class VentanaPrincipal extends JFrame {
         setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
         addWindowListener(cierre); // X = salir de la aplicación guardando los datos
         construirInterfaz(contexto, usuario);
-        setSize(860, 780);
-        setMinimumSize(new Dimension(640, 560));
+        // Tamaño preferido 860x780, pero nunca más grande que el área útil de la pantalla
+        // (sin la barra de tareas). En pantallas de 720 px lógicos (p. ej. 1920x1080 al 150 %)
+        // la ventana de 780 px quedaba cortada y no se veía su parte inferior.
+        Rectangle util = GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds();
+        setMinimumSize(new Dimension(Math.min(640, util.width), Math.min(560, util.height)));
+        setSize(Math.min(860, util.width), Math.min(780, util.height));
         setLocationRelativeTo(null);
     }
 
@@ -78,21 +88,24 @@ public class VentanaPrincipal extends JFrame {
         ServicioAmistades servicioAmistades = new ServicioAmistades(contexto);
         ServicioPublicaciones servicioPublicaciones = new ServicioPublicaciones(contexto, servicioAmistades);
 
-        // Las tres pestañas se avisan entre sí cuando cambian los amigos o las publicaciones.
+        // Las pestañas se avisan entre sí cuando cambian los amigos, las solicitudes o las publicaciones.
         panelMuro = new PanelMuro(servicioPublicaciones);
         panelAmigos = new PanelMisAmigos(servicioAmistades, this::amigosCambiaron);
         panelBuscar = new PanelBuscarUsuarios(servicioAmistades, this::amigosCambiaron);
+        panelSolicitudes = new PanelSolicitudes(servicioAmistades, this::amigosCambiaron);
 
         JPanel raiz = new JPanel(new BorderLayout());
         raiz.setBackground(Estilos.FONDO);
         raiz.add(construirEncabezado(usuario), BorderLayout.NORTH);
 
-        JTabbedPane pestanas = new JTabbedPane();
+        pestanas = new JTabbedPane();
         pestanas.setName("pestanas");
         pestanas.setFont(Estilos.fuente(Font.BOLD, 13));
         pestanas.addTab("Muro", panelMuro);
         pestanas.addTab("Buscar usuarios", panelBuscar);
+        pestanas.addTab("Solicitudes", panelSolicitudes);
         pestanas.addTab("Mis amigos", panelAmigos);
+        actualizarTituloSolicitudes(); // al iniciar sesión ya se ve si hay solicitudes pendientes
         // Al abrir una pestaña siempre se muestra la información actual
         pestanas.addChangeListener(e -> {
             if (pestanas.getSelectedComponent() == panelMuro) {
@@ -101,7 +114,10 @@ public class VentanaPrincipal extends JFrame {
                 panelAmigos.refrescar();
             } else if (pestanas.getSelectedComponent() == panelBuscar) {
                 panelBuscar.refrescar();
+            } else if (pestanas.getSelectedComponent() == panelSolicitudes) {
+                panelSolicitudes.refrescar();
             }
+            actualizarTituloSolicitudes();
         });
         raiz.add(pestanas, BorderLayout.CENTER);
 
@@ -123,11 +139,20 @@ public class VentanaPrincipal extends JFrame {
         return encabezado;
     }
 
-    /** Se ejecuta cuando una pestaña cambió una amistad: las demás deben reflejarlo. */
+    /** Se ejecuta cuando una pestaña cambió una amistad o solicitud: las demás deben reflejarlo. */
     private void amigosCambiaron() {
-        panelMuro.refrescar();
+        panelSolicitudes.refrescar(); // primero: relee el disco para todas las pestañas
         panelAmigos.refrescar();
         panelBuscar.refrescar();
+        panelMuro.refrescar();
+        actualizarTituloSolicitudes();
+    }
+
+    /** Muestra en la pestaña "Solicitudes" cuántas solicitudes recibidas hay pendientes. */
+    private void actualizarTituloSolicitudes() {
+        int indice = pestanas.indexOfComponent(panelSolicitudes);
+        int recibidas = panelSolicitudes.getCantidadRecibidas();
+        pestanas.setTitleAt(indice, recibidas > 0 ? "Solicitudes (" + recibidas + ")" : "Solicitudes");
     }
 
     /** Cierra esta ventana y delega el cierre de sesión (guardar, limpiar, volver al login). */

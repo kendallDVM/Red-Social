@@ -1,11 +1,5 @@
 [
   {
-    "id": "1234",
-    "nombre": "david",
-    "usuario": "david12",
-    "contrasena": "$2a$12$C.g.UCq5zRVxlhqrVFPsyeI1KMpDcdq0tMNQkZ2gnZnEhVLwmf32W"
-  },
-  {
     "id": "2026001",
     "nombre": "Kendall",
     "usuario": "kendall",
@@ -28,5 +22,11 @@
     "nombre": "Mariano Martínez Alfaro",
     "usuario": "Mariano2",
     "contrasena": "$2a$12$ZPTiWMHuBaXLTp4HPrPFM.4FbYGrM2pEa5.Hyw1Ti4OF.5KlK4GxC"
+  },
+  {
+    "id": "123",
+    "nombre": "david",
+    "usuario": "david",
+    "contrasena": "$2a$12$PRM9rUuixZvEQUZYkQ6l1OEeG8E76W3kp4lVonKKvJkIKgMTKHaYe"
   }
 ]
