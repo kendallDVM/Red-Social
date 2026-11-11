@@ -311,4 +311,137 @@ class ServicioPublicacionesTest {
         assertEquals(1, contexto.getPublicaciones().tamano());
         assertEquals("publicada en B", servicio.obtenerMuroPersonal("1").obtener(0).getTexto());
     }
+
+    // ------------------------------------------------------------------ me gusta
+
+    /** Hace amigos a 1 y 2 de forma persistente (en memoria y en amistades.json). */
+    private void hacerAmigosAnaYLuis() {
+        assertTrue(new ServicioAmistades(contexto).agregarAmigo("1", "2").esExitoso());
+    }
+
+    @Test
+    void puedeDarMeGustaASuPropiaPublicacion() {
+        String id = servicio.publicar("1", "hola").getPublicacion().getId();
+
+        ResultadoPublicacion r = servicio.alternarMeGusta("1", id);
+
+        assertTrue(r.esExitoso());
+        assertTrue(r.getPublicacion().leGustaA("1"));
+        assertEquals(1, r.getPublicacion().cantidadMeGusta());
+    }
+
+    @Test
+    void puedeDarMeGustaALaPublicacionDeUnAmigoYSeGuarda() throws Exception {
+        hacerAmigosAnaYLuis();
+        String id = servicio.publicar("1", "hola").getPublicacion().getId();
+
+        assertTrue(servicio.alternarMeGusta("2", id).esExitoso());
+
+        ListaPublicaciones enDisco = new ListaPublicaciones();
+        new GestorArchivos(carpetaTemporal).cargarPublicaciones(enDisco, contexto.getUsuarios());
+        assertTrue(enDisco.buscarPorId(id).leGustaA("2"));
+    }
+
+    @Test
+    void alternarDosVecesQuitaElMeGusta() throws Exception {
+        String id = servicio.publicar("1", "hola").getPublicacion().getId();
+
+        ResultadoPublicacion primero = servicio.alternarMeGusta("1", id);
+        ResultadoPublicacion segundo = servicio.alternarMeGusta("1", id);
+
+        assertEquals("Te gusta esta publicación.", primero.getMensaje());
+        assertEquals("Quitaste tu me gusta.", segundo.getMensaje());
+        assertEquals(0, segundo.getPublicacion().cantidadMeGusta());
+        ListaPublicaciones enDisco = new ListaPublicaciones();
+        new GestorArchivos(carpetaTemporal).cargarPublicaciones(enDisco, contexto.getUsuarios());
+        assertEquals(0, enDisco.buscarPorId(id).cantidadMeGusta());
+    }
+
+    @Test
+    void unUsuarioNoPuedeDarMeGustaDosVeces() {
+        String id = servicio.publicar("1", "hola").getPublicacion().getId();
+        servicio.alternarMeGusta("1", id);
+
+        servicio.alternarMeGusta("1", id); // lo quita, no suma otro
+
+        assertEquals(0, contexto.getPublicaciones().buscarPorId(id).cantidadMeGusta());
+    }
+
+    @Test
+    void variosUsuariosSumanSusMeGusta() {
+        hacerAmigosAnaYLuis();
+        String id = servicio.publicar("1", "hola").getPublicacion().getId();
+
+        servicio.alternarMeGusta("1", id);
+        servicio.alternarMeGusta("2", id);
+
+        assertEquals(2, contexto.getPublicaciones().buscarPorId(id).cantidadMeGusta());
+    }
+
+    @Test
+    void noPuedeDarMeGustaALaPublicacionDeAlguienQueNoEsAmigo() {
+        String id = servicio.publicar("1", "hola").getPublicacion().getId();
+
+        ResultadoPublicacion r = servicio.alternarMeGusta("3", id);
+
+        assertEquals(ResultadoPublicacion.Tipo.NO_PERMITIDO, r.getTipo());
+        assertEquals(0, contexto.getPublicaciones().buscarPorId(id).cantidadMeGusta());
+    }
+
+    @Test
+    void meGustaConPublicacionInexistenteOSinSesionSeRechaza() {
+        assertEquals(ResultadoPublicacion.Tipo.PUBLICACION_NO_EXISTE,
+                servicio.alternarMeGusta("1", "P99").getTipo());
+        assertEquals(ResultadoPublicacion.Tipo.PUBLICACION_NO_EXISTE,
+                servicio.alternarMeGusta("1", null).getTipo());
+        assertEquals(ResultadoPublicacion.Tipo.SIN_SESION, servicio.alternarMeGusta(null, "P1").getTipo());
+        assertEquals(ResultadoPublicacion.Tipo.SIN_SESION, servicio.alternarMeGusta("99", "P1").getTipo());
+    }
+
+    @Test
+    void siNoSePuedeLeerElArchivoElMeGustaNoCambiaNada() throws Exception {
+        String id = servicio.publicar("1", "hola").getPublicacion().getId();
+        Files.writeString(carpetaTemporal.resolve(GestorArchivos.ARCHIVO_PUBLICACIONES), "[ roto",
+                StandardCharsets.UTF_8);
+
+        ResultadoPublicacion r = servicio.alternarMeGusta("1", id);
+
+        assertEquals(ResultadoPublicacion.Tipo.ERROR_PERSISTENCIA, r.getTipo());
+        assertEquals(0, contexto.getPublicaciones().buscarPorId(id).cantidadMeGusta());
+    }
+
+    @Test
+    void losMeGustaDeDosInstanciasSeSumanYUnoQuitadoNoReaparece() {
+        hacerAmigosAnaYLuis();
+        ContextoAplicacion[] otro = new ContextoAplicacion[1];
+        ServicioPublicaciones servicioB = otraInstancia(otro);
+        String id = servicio.publicar("1", "hola").getPublicacion().getId();
+
+        servicio.alternarMeGusta("1", id);   // instancia A: a Ana le gusta
+        servicioB.alternarMeGusta("2", id);  // instancia B: a Luis le gusta (ve el de Ana)
+        assertEquals(2, otro[0].getPublicaciones().buscarPorId(id).cantidadMeGusta());
+
+        servicio.alternarMeGusta("1", id);   // instancia A: Ana lo quita
+        servicioB.actualizarDesdeDisco();    // instancia B se actualiza
+
+        Publicacion enB = otro[0].getPublicaciones().buscarPorId(id);
+        assertFalse(enB.leGustaA("1")); // no reaparece
+        assertTrue(enB.leGustaA("2"));
+        assertEquals(1, enB.cantidadMeGusta());
+    }
+
+    @Test
+    void obtenerNombresMeGustaEnElOrdenEnQueSeDieron() {
+        hacerAmigosAnaYLuis();
+        Publicacion p = servicio.publicar("1", "hola").getPublicacion();
+        servicio.alternarMeGusta("2", p.getId());
+        servicio.alternarMeGusta("1", p.getId());
+
+        ListaDinamica<String> nombres = servicio.obtenerNombresMeGusta(p);
+
+        assertEquals(2, nombres.tamano());
+        assertEquals("Luis Peña", nombres.obtener(0));
+        assertEquals("Ana Mora", nombres.obtener(1));
+        assertTrue(servicio.obtenerNombresMeGusta(null).estaVacia());
+    }
 }

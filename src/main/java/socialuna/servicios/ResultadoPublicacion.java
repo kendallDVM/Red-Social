@@ -3,7 +3,7 @@ package socialuna.servicios;
 import socialuna.modelo.Publicacion;
 
 /**
- * Resultado de publicar un mensaje.
+ * Resultado de publicar un mensaje o de dar o quitar un "me gusta".
  *
  * <p>Sigue el mismo estilo que {@link ResultadoAmistad}: la interfaz gráfica solo
  * consulta {@link #esExitoso()} y muestra {@link #getMensaje()} en una alerta.
@@ -19,7 +19,11 @@ public final class ResultadoPublicacion {
         TEXTO_MUY_LARGO,
         /** No hay un usuario con sesión activa o ya no está registrado. */
         SIN_SESION,
-        /** No se pudo guardar publicaciones.json; la publicación se deshizo. */
+        /** La publicación ya no existe (por ejemplo, el ID no está en el archivo). */
+        PUBLICACION_NO_EXISTE,
+        /** Solo se puede dar "me gusta" a las publicaciones propias y a las de los amigos. */
+        NO_PERMITIDO,
+        /** No se pudo guardar publicaciones.json; el cambio se deshizo. */
         ERROR_PERSISTENCIA
     }
 
