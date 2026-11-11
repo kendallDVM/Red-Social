@@ -194,4 +194,46 @@ class GestorArchivosPublicacionesTest {
             assertFalse(archivos.anyMatch(p -> p.getFileName().toString().endsWith(".tmp")));
         }
     }
+
+    @Test
+    void guardaYRecuperaLosMeGusta() throws Exception {
+        ListaPublicaciones lista = new ListaPublicaciones();
+        Publicacion p = new Publicacion("P1", "1", "Hola", "2026-11-01 10:00:00");
+        p.agregarMeGusta("2");
+        p.agregarMeGusta("1");
+        lista.agregar(p);
+        lista.agregar(new Publicacion("P2", "2", "Sin me gusta", "2026-11-02 10:00:00"));
+        new GestorArchivos(carpetaTemporal).guardarPublicaciones(lista);
+
+        ListaPublicaciones cargada = new ListaPublicaciones();
+        new GestorArchivos(carpetaTemporal).cargarPublicaciones(cargada, usuarios);
+
+        assertEquals(java.util.List.of("2", "1"), java.util.List.copyOf(cargada.buscarPorId("P1").getMeGusta()));
+        assertEquals(0, cargada.buscarPorId("P2").cantidadMeGusta());
+        // La publicación sin "me gusta" no trae el campo en el archivo
+        String crudo = Files.readString(archivo(), StandardCharsets.UTF_8);
+        assertEquals(1, crudo.split("meGusta", -1).length - 1);
+    }
+
+    @Test
+    void cargaArchivosAnterioresSinElCampoMeGusta() throws Exception {
+        escribir("[{\"id\":\"P1\",\"idAutor\":\"1\",\"texto\":\"Antigua\",\"fechaHora\":\"2026-11-01 10:00:00\"}]");
+
+        ListaPublicaciones cargada = new ListaPublicaciones();
+        int cantidad = new GestorArchivos(carpetaTemporal).cargarPublicaciones(cargada, usuarios);
+
+        assertEquals(1, cantidad);
+        assertEquals(0, cargada.obtener(0).cantidadMeGusta());
+    }
+
+    @Test
+    void ignoraLosMeGustaDeUsuariosInexistentes() throws Exception {
+        escribir("[{\"id\":\"P1\",\"idAutor\":\"1\",\"texto\":\"Hola\",\"fechaHora\":\"2026-11-01 10:00:00\","
+                + "\"meGusta\":[\"2\",\"99\"]}]");
+
+        ListaPublicaciones cargada = new ListaPublicaciones();
+        new GestorArchivos(carpetaTemporal).cargarPublicaciones(cargada, usuarios);
+
+        assertEquals(java.util.List.of("2"), java.util.List.copyOf(cargada.obtener(0).getMeGusta()));
+    }
 }

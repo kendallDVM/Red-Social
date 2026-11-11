@@ -33,6 +33,7 @@ import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
+import javax.swing.text.DefaultCaret;
 
 import socialuna.datos.ListaDinamica;
 import socialuna.modelo.Publicacion;
@@ -217,8 +218,17 @@ public class PanelMuro extends JPanel {
         areaMensaje.requestFocusInWindow();
     }
 
-    /** Vuelve a cargar el muro elegido del usuario activo desde memoria. */
+    /**
+     * Vuelve a cargar el muro elegido del usuario activo. Antes relee el disco, para incluir
+     * lo que publicaron o aceptaron desde otra instancia del programa.
+     */
     public final void refrescar() {
+        refrescar(true);
+    }
+
+    /** @param alInicio {@code true} para volver arriba (lo más reciente); {@code false} para respetar la posición */
+    private void refrescar(boolean alInicio) {
+        servicio.actualizarDesdeDisco();
         lista.removeAll();
         Usuario activo = Sesion.getUsuarioActivo();
         if (activo == null) {
@@ -244,6 +254,10 @@ public class PanelMuro extends JPanel {
         lblResumen.setText(cantidad == 1 ? "1 publicación" : cantidad + " publicaciones");
         lista.revalidate();
         lista.repaint();
+        if (alInicio) {
+            // Lo más reciente está arriba: el muro se muestra desde el inicio
+            SwingUtilities.invokeLater(() -> desplazamiento.getVerticalScrollBar().setValue(0));
+        }
     }
 
     // ------------------------------------------------------------------ tarjetas
@@ -290,6 +304,8 @@ public class PanelMuro extends JPanel {
         texto.setFont(Estilos.fuente(Font.PLAIN, 14));
         texto.setForeground(Estilos.TEXTO);
         texto.setBorder(BorderFactory.createEmptyBorder());
+        // Sin esto, el cursor interno del texto hace que el muro se desplace solo hacia abajo
+        ((DefaultCaret) texto.getCaret()).setUpdatePolicy(DefaultCaret.NEVER_UPDATE);
 
         JPanel tarjeta = new JPanel(new BorderLayout(0, 6));
         tarjeta.setName("publicacion-" + publicacion.getId());
@@ -299,7 +315,56 @@ public class PanelMuro extends JPanel {
                 BorderFactory.createEmptyBorder(10, 14, 12, 14)));
         tarjeta.add(encabezado, BorderLayout.NORTH);
         tarjeta.add(texto, BorderLayout.CENTER);
+        tarjeta.add(crearPieMeGusta(publicacion, activo), BorderLayout.SOUTH);
         return tarjeta;
+    }
+
+    /** Botón "Me gusta" con el total; cambia de color cuando al usuario activo le gusta la publicación. */
+    private JComponent crearPieMeGusta(Publicacion publicacion, Usuario activo) {
+        boolean leGusta = publicacion.leGustaA(activo.getId());
+        int total = publicacion.cantidadMeGusta();
+        String texto = (leGusta ? "Te gusta" : "Me gusta") + (total > 0 ? "  ·  " + total : "");
+
+        JButton boton = leGusta ? Estilos.botonPrimario(texto) : Estilos.botonSecundario(texto);
+        boton.setName("meGusta-" + publicacion.getId());
+        boton.setFont(Estilos.fuente(Font.BOLD, 12));
+        boton.setBorder(BorderFactory.createEmptyBorder(5, 12, 5, 12));
+        boton.setFocusable(false);
+        boton.setToolTipText(descripcionMeGusta(publicacion));
+        boton.addActionListener(e -> alternarMeGusta(publicacion));
+
+        JPanel pie = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        pie.setOpaque(false);
+        pie.setBorder(BorderFactory.createEmptyBorder(4, 0, 0, 0));
+        pie.add(boton);
+        return pie;
+    }
+
+    /** Texto emergente: a quiénes les gusta la publicación. */
+    private String descripcionMeGusta(Publicacion publicacion) {
+        ListaDinamica<String> nombres = servicio.obtenerNombresMeGusta(publicacion);
+        if (nombres.estaVacia()) {
+            return "Nadie ha dado me gusta todavía";
+        }
+        StringBuilder sb = new StringBuilder("Les gusta a: ");
+        for (int i = 0; i < nombres.tamano(); i++) {
+            sb.append(i > 0 ? ", " : "").append(nombres.obtener(i));
+        }
+        return sb.toString();
+    }
+
+    private void alternarMeGusta(Publicacion publicacion) {
+        Usuario activo = Sesion.getUsuarioActivo();
+        ResultadoPublicacion resultado = servicio.alternarMeGusta(activo == null ? null : activo.getId(),
+                publicacion.getId());
+        int posicion = desplazamiento.getVerticalScrollBar().getValue();
+        if (!resultado.esExitoso()) {
+            int icono = resultado.getTipo() == ResultadoPublicacion.Tipo.ERROR_PERSISTENCIA
+                    ? JOptionPane.ERROR_MESSAGE : JOptionPane.WARNING_MESSAGE;
+            JOptionPane.showMessageDialog(this, resultado.getMensaje(), TITULO_ALERTA, icono);
+        }
+        refrescar(false); // se actualiza el botón sin saltar al inicio de la lista
+        SwingUtilities.invokeLater(() -> desplazamiento.getVerticalScrollBar().setValue(posicion));
     }
 
     // ------------------------------------------------------------------ contador

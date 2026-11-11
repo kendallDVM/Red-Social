@@ -3,7 +3,11 @@ package socialuna.modelo;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Mensaje publicado por un usuario.
@@ -11,6 +15,10 @@ import java.util.Objects;
  * <p>La fecha se guarda como texto con el formato acordado por el equipo
  * ({@value #PATRON_FECHA}). Así el JSON queda legible y no hace falta un
  * adaptador de Gson para {@code LocalDateTime}.
+ *
+ * <p>Guarda también a quiénes les gusta ("me gusta"): un conjunto de IDs de usuario, sin
+ * repetidos y en el orden en que lo dieron. Mientras nadie le dé "me gusta" el campo queda
+ * vacío ({@code null}) y no aparece en el JSON, así los archivos anteriores siguen siendo válidos.
  *
  * <p>Clase base compartida: la lógica de publicar y del muro corresponde al Módulo 3.
  */
@@ -24,6 +32,9 @@ public class Publicacion {
     private String idAutor;
     private String texto;
     private String fechaHora;
+
+    /** IDs de los usuarios a quienes les gusta; {@code null} si a nadie (no se escribe en el JSON). */
+    private Set<String> meGusta;
 
     /** Constructor vacío requerido por Gson. */
     private Publicacion() {
@@ -46,8 +57,17 @@ public class Publicacion {
         this(id, idAutor, texto, fechaHora == null ? null : fechaHora.format(FORMATO_FECHA));
     }
 
-    /** Verifica los datos básicos. También sirve para objetos creados por Gson. */
+    /**
+     * Verifica los datos básicos. También sirve para objetos creados por Gson: además
+     * descarta de "me gusta" los IDs vacíos que pudiera traer un archivo editado a mano.
+     */
     public void validar() {
+        if (meGusta != null) {
+            meGusta.removeIf(id -> id == null || id.isBlank());
+            if (meGusta.isEmpty()) {
+                meGusta = null;
+            }
+        }
         if (id == null || id.isBlank()) {
             throw new IllegalArgumentException("El ID de la publicación es obligatorio.");
         }
@@ -100,6 +120,60 @@ public class Publicacion {
     /** Fecha convertida a {@link LocalDateTime}, útil para ordenar el muro. */
     public LocalDateTime getFechaHoraComoFecha() {
         return LocalDateTime.parse(fechaHora, FORMATO_FECHA);
+    }
+
+    // ------------------------------------------------------------------ me gusta
+
+    /** Indica si a ese usuario le gusta la publicación. */
+    public boolean leGustaA(String idUsuario) {
+        return meGusta != null && idUsuario != null && meGusta.contains(idUsuario);
+    }
+
+    /** Cantidad de usuarios a quienes les gusta la publicación. */
+    public int cantidadMeGusta() {
+        return meGusta == null ? 0 : meGusta.size();
+    }
+
+    /** Copia de solo lectura de los IDs a quienes les gusta, en el orden en que dieron "me gusta". */
+    public Set<String> getMeGusta() {
+        return meGusta == null ? Collections.emptySet() : Collections.unmodifiableSet(new LinkedHashSet<>(meGusta));
+    }
+
+    /**
+     * Registra que a ese usuario le gusta la publicación.
+     *
+     * @return {@code true} si es nuevo; {@code false} si ya le gustaba
+     * @throws IllegalArgumentException si falta el ID
+     */
+    public boolean agregarMeGusta(String idUsuario) {
+        if (idUsuario == null || idUsuario.isBlank()) {
+            throw new IllegalArgumentException("El ID del usuario es obligatorio.");
+        }
+        if (meGusta == null) {
+            meGusta = new LinkedHashSet<>();
+        }
+        return meGusta.add(idUsuario);
+    }
+
+    /** @return {@code true} si le gustaba y se quitó; {@code false} si no le gustaba */
+    public boolean quitarMeGusta(String idUsuario) {
+        if (meGusta == null || !meGusta.remove(idUsuario)) {
+            return false;
+        }
+        if (meGusta.isEmpty()) {
+            meGusta = null;
+        }
+        return true;
+    }
+
+    /** Reemplaza todos los "me gusta" por los indicados (se ignoran IDs vacíos y repetidos). */
+    public void reemplazarMeGusta(Collection<String> idsUsuarios) {
+        meGusta = null;
+        for (String id : idsUsuarios) {
+            if (id != null && !id.isBlank()) {
+                agregarMeGusta(id);
+            }
+        }
     }
 
     @Override

@@ -116,12 +116,7 @@ class UsuariosPruebaTest {
     }
 
     @Test
-    void seConservaElUsuarioPreexistenteDavid12() {
-        Usuario david = contexto.getUsuarios().buscarPorUsuario("david12");
-        assertNotNull(david);
-        assertEquals("1234", david.getId());
-        assertEquals("david", david.getNombre());
-        assertTrue(Usuario.esHashBCrypt(david.getContrasenaHash()));
-        assertEquals(4, contexto.getUsuarios().tamano());
+    void elArchivoSoloTieneLasTresCuentasDeDemostracion() {
+        assertEquals(CUENTAS.length, contexto.getUsuarios().tamano());
     }
 }

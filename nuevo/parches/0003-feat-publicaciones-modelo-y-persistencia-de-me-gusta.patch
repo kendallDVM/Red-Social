@@ -1,0 +1,442 @@
+From ae55e826734de4844e5f8ce63a571da5aa35c2db Mon Sep 17 00:00:00 2001
+From: marianomaalf <marianomaalf@gmail.com>
+Date: Wed, 11 Nov 2026 11:41:28 -0600
+Subject: [PATCH 3/6] feat(publicaciones): modelo y persistencia de "me gusta"
+
+Cada publicacion guarda un conjunto de IDs de usuario a quienes les gusta
+(sin repetidos, en el orden en que lo dieron):
+- Publicacion: leGustaA, cantidadMeGusta, getMeGusta, agregarMeGusta,
+  quitarMeGusta y reemplazarMeGusta. Mientras nadie de "me gusta" el campo
+  no se escribe, asi que los publicaciones.json anteriores siguen siendo
+  validos.
+- GestorArchivos: al cargar se ignoran los "me gusta" de usuarios que ya no
+  existen.
+- ListaPublicaciones.combinarCon: en las publicaciones que ya existen los
+  "me gusta" se reemplazan por los del archivo, que es la fuente de verdad
+  entre instancias (unirlos haria reaparecer uno que otra instancia quito).
+
+Incluye pruebas del modelo, del archivo y de la combinacion.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ .../java/socialuna/datos/GestorArchivos.java  |  11 ++
+ .../socialuna/datos/ListaPublicaciones.java   |  17 ++-
+ .../java/socialuna/modelo/Publicacion.java    |  76 ++++++++++-
+ .../GestorArchivosPublicacionesTest.java      |  42 ++++++
+ .../datos/ListaPublicacionesTest.java         |  32 +++++
+ .../modelo/PublicacionMeGustaTest.java        | 122 ++++++++++++++++++
+ 6 files changed, 294 insertions(+), 6 deletions(-)
+ create mode 100644 src/test/java/socialuna/modelo/PublicacionMeGustaTest.java
+
+diff --git a/src/main/java/socialuna/datos/GestorArchivos.java b/src/main/java/socialuna/datos/GestorArchivos.java
+index fcfa037..da133b9 100644
+--- a/src/main/java/socialuna/datos/GestorArchivos.java
++++ b/src/main/java/socialuna/datos/GestorArchivos.java
+@@ -554,6 +554,7 @@ public class GestorArchivos {
+      *   <li>Si el autor no existe en {@code usuarios}, esa publicación se ignora sin fallar.</li>
+      *   <li>Los registros incompletos o con fecha inválida se ignoran.</li>
+      *   <li>Si un ID se repite, solo se conserva la primera publicación con ese ID.</li>
++     *   <li>Los "me gusta" de usuarios que no existen se ignoran.</li>
+      * </ul>
+      * Lo ignorado desaparece del archivo la próxima vez que se guarde.
+      *
+@@ -612,6 +613,7 @@ public class GestorArchivos {
+         if (leidas != null) {
+             for (Publicacion publicacion : leidas) {
+                 if (esPublicacionValida(publicacion, usuarios) && !temporal.existeId(publicacion.getId())) {
++                    quitarMeGustaDeUsuariosInexistentes(publicacion, usuarios);
+                     temporal.agregar(publicacion);
+                 }
+             }
+@@ -624,6 +626,15 @@ public class GestorArchivos {
+         return destino.tamano();
+     }
+ 
++    /** Un "me gusta" de un usuario que ya no existe se ignora sin fallar. */
++    private static void quitarMeGustaDeUsuariosInexistentes(Publicacion publicacion, ListaUsuarios usuarios) {
++        for (String id : publicacion.getMeGusta()) { // getMeGusta devuelve una copia: se puede modificar
++            if (!usuarios.existeId(id)) {
++                publicacion.quitarMeGusta(id);
++            }
++        }
++    }
++
+     /** Una publicación se acepta si está completa y su autor existe. */
+     private static boolean esPublicacionValida(Publicacion publicacion, ListaUsuarios usuarios) {
+         if (publicacion == null) {
+diff --git a/src/main/java/socialuna/datos/ListaPublicaciones.java b/src/main/java/socialuna/datos/ListaPublicaciones.java
+index 8f5e488..da0a2e3 100644
+--- a/src/main/java/socialuna/datos/ListaPublicaciones.java
++++ b/src/main/java/socialuna/datos/ListaPublicaciones.java
+@@ -63,19 +63,26 @@ public class ListaPublicaciones {
+     }
+ 
+     /**
+-     * Agrega a esta lista las publicaciones de {@code otra} que todavía no están (se
+-     * comparan por ID). Las que ya existen no se tocan y nunca se eliminan publicaciones.
+-     *
+-     * <p>Sirve para incorporar lo que otra instancia del programa guardó en el archivo.
++     * Incorpora lo que otra instancia del programa guardó en el archivo ({@code otra}):
++     * <ul>
++     *   <li>Agrega las publicaciones que todavía no están (se comparan por ID). Nunca se
++     *       eliminan publicaciones ni se cambia su texto.</li>
++     *   <li>En las que ya existen, los "me gusta" se <b>reemplazan</b> por los de {@code otra}:
++     *       cada cambio se guarda en el momento, así que el archivo es la fuente de verdad
++     *       (unirlos haría reaparecer un "me gusta" que otra instancia ya quitó).</li>
++     * </ul>
+      *
+      * @return cantidad de publicaciones agregadas
+      */
+     public int combinarCon(ListaPublicaciones otra) {
+         int agregadas = 0;
+         for (Publicacion p : otra.publicaciones) {
+-            if (!existeId(p.getId())) {
++            Publicacion existente = buscarPorId(p.getId());
++            if (existente == null) {
+                 publicaciones.agregar(p);
+                 agregadas++;
++            } else if (existente != p) {
++                existente.reemplazarMeGusta(p.getMeGusta());
+             }
+         }
+         return agregadas;
+diff --git a/src/main/java/socialuna/modelo/Publicacion.java b/src/main/java/socialuna/modelo/Publicacion.java
+index 033004a..00c0760 100644
+--- a/src/main/java/socialuna/modelo/Publicacion.java
++++ b/src/main/java/socialuna/modelo/Publicacion.java
+@@ -3,7 +3,11 @@ package socialuna.modelo;
+ import java.time.LocalDateTime;
+ import java.time.format.DateTimeFormatter;
+ import java.time.format.DateTimeParseException;
++import java.util.Collection;
++import java.util.Collections;
++import java.util.LinkedHashSet;
+ import java.util.Objects;
++import java.util.Set;
+ 
+ /**
+  * Mensaje publicado por un usuario.
+@@ -12,6 +16,10 @@ import java.util.Objects;
+  * ({@value #PATRON_FECHA}). Así el JSON queda legible y no hace falta un
+  * adaptador de Gson para {@code LocalDateTime}.
+  *
++ * <p>Guarda también a quiénes les gusta ("me gusta"): un conjunto de IDs de usuario, sin
++ * repetidos y en el orden en que lo dieron. Mientras nadie le dé "me gusta" el campo queda
++ * vacío ({@code null}) y no aparece en el JSON, así los archivos anteriores siguen siendo válidos.
++ *
+  * <p>Clase base compartida: la lógica de publicar y del muro corresponde al Módulo 3.
+  */
+ public class Publicacion {
+@@ -25,6 +33,9 @@ public class Publicacion {
+     private String texto;
+     private String fechaHora;
+ 
++    /** IDs de los usuarios a quienes les gusta; {@code null} si a nadie (no se escribe en el JSON). */
++    private Set<String> meGusta;
++
+     /** Constructor vacío requerido por Gson. */
+     private Publicacion() {
+     }
+@@ -46,8 +57,17 @@ public class Publicacion {
+         this(id, idAutor, texto, fechaHora == null ? null : fechaHora.format(FORMATO_FECHA));
+     }
+ 
+-    /** Verifica los datos básicos. También sirve para objetos creados por Gson. */
++    /**
++     * Verifica los datos básicos. También sirve para objetos creados por Gson: además
++     * descarta de "me gusta" los IDs vacíos que pudiera traer un archivo editado a mano.
++     */
+     public void validar() {
++        if (meGusta != null) {
++            meGusta.removeIf(id -> id == null || id.isBlank());
++            if (meGusta.isEmpty()) {
++                meGusta = null;
++            }
++        }
+         if (id == null || id.isBlank()) {
+             throw new IllegalArgumentException("El ID de la publicación es obligatorio.");
+         }
+@@ -102,6 +122,60 @@ public class Publicacion {
+         return LocalDateTime.parse(fechaHora, FORMATO_FECHA);
+     }
+ 
++    // ------------------------------------------------------------------ me gusta
++
++    /** Indica si a ese usuario le gusta la publicación. */
++    public boolean leGustaA(String idUsuario) {
++        return meGusta != null && idUsuario != null && meGusta.contains(idUsuario);
++    }
++
++    /** Cantidad de usuarios a quienes les gusta la publicación. */
++    public int cantidadMeGusta() {
++        return meGusta == null ? 0 : meGusta.size();
++    }
++
++    /** Copia de solo lectura de los IDs a quienes les gusta, en el orden en que dieron "me gusta". */
++    public Set<String> getMeGusta() {
++        return meGusta == null ? Collections.emptySet() : Collections.unmodifiableSet(new LinkedHashSet<>(meGusta));
++    }
++
++    /**
++     * Registra que a ese usuario le gusta la publicación.
++     *
++     * @return {@code true} si es nuevo; {@code false} si ya le gustaba
++     * @throws IllegalArgumentException si falta el ID
++     */
++    public boolean agregarMeGusta(String idUsuario) {
++        if (idUsuario == null || idUsuario.isBlank()) {
++            throw new IllegalArgumentException("El ID del usuario es obligatorio.");
++        }
++        if (meGusta == null) {
++            meGusta = new LinkedHashSet<>();
++        }
++        return meGusta.add(idUsuario);
++    }
++
++    /** @return {@code true} si le gustaba y se quitó; {@code false} si no le gustaba */
++    public boolean quitarMeGusta(String idUsuario) {
++        if (meGusta == null || !meGusta.remove(idUsuario)) {
++            return false;
++        }
++        if (meGusta.isEmpty()) {
++            meGusta = null;
++        }
++        return true;
++    }
++
++    /** Reemplaza todos los "me gusta" por los indicados (se ignoran IDs vacíos y repetidos). */
++    public void reemplazarMeGusta(Collection<String> idsUsuarios) {
++        meGusta = null;
++        for (String id : idsUsuarios) {
++            if (id != null && !id.isBlank()) {
++                agregarMeGusta(id);
++            }
++        }
++    }
++
+     @Override
+     public boolean equals(Object o) {
+         if (this == o) {
+diff --git a/src/test/java/socialuna/datos/GestorArchivosPublicacionesTest.java b/src/test/java/socialuna/datos/GestorArchivosPublicacionesTest.java
+index b3d7eb9..237d276 100644
+--- a/src/test/java/socialuna/datos/GestorArchivosPublicacionesTest.java
++++ b/src/test/java/socialuna/datos/GestorArchivosPublicacionesTest.java
+@@ -194,4 +194,46 @@ class GestorArchivosPublicacionesTest {
+             assertFalse(archivos.anyMatch(p -> p.getFileName().toString().endsWith(".tmp")));
+         }
+     }
++
++    @Test
++    void guardaYRecuperaLosMeGusta() throws Exception {
++        ListaPublicaciones lista = new ListaPublicaciones();
++        Publicacion p = new Publicacion("P1", "1", "Hola", "2026-11-01 10:00:00");
++        p.agregarMeGusta("2");
++        p.agregarMeGusta("1");
++        lista.agregar(p);
++        lista.agregar(new Publicacion("P2", "2", "Sin me gusta", "2026-11-02 10:00:00"));
++        new GestorArchivos(carpetaTemporal).guardarPublicaciones(lista);
++
++        ListaPublicaciones cargada = new ListaPublicaciones();
++        new GestorArchivos(carpetaTemporal).cargarPublicaciones(cargada, usuarios);
++
++        assertEquals(java.util.List.of("2", "1"), java.util.List.copyOf(cargada.buscarPorId("P1").getMeGusta()));
++        assertEquals(0, cargada.buscarPorId("P2").cantidadMeGusta());
++        // La publicación sin "me gusta" no trae el campo en el archivo
++        String crudo = Files.readString(archivo(), StandardCharsets.UTF_8);
++        assertEquals(1, crudo.split("meGusta", -1).length - 1);
++    }
++
++    @Test
++    void cargaArchivosAnterioresSinElCampoMeGusta() throws Exception {
++        escribir("[{\"id\":\"P1\",\"idAutor\":\"1\",\"texto\":\"Antigua\",\"fechaHora\":\"2026-11-01 10:00:00\"}]");
++
++        ListaPublicaciones cargada = new ListaPublicaciones();
++        int cantidad = new GestorArchivos(carpetaTemporal).cargarPublicaciones(cargada, usuarios);
++
++        assertEquals(1, cantidad);
++        assertEquals(0, cargada.obtener(0).cantidadMeGusta());
++    }
++
++    @Test
++    void ignoraLosMeGustaDeUsuariosInexistentes() throws Exception {
++        escribir("[{\"id\":\"P1\",\"idAutor\":\"1\",\"texto\":\"Hola\",\"fechaHora\":\"2026-11-01 10:00:00\","
++                + "\"meGusta\":[\"2\",\"99\"]}]");
++
++        ListaPublicaciones cargada = new ListaPublicaciones();
++        new GestorArchivos(carpetaTemporal).cargarPublicaciones(cargada, usuarios);
++
++        assertEquals(java.util.List.of("2"), java.util.List.copyOf(cargada.obtener(0).getMeGusta()));
++    }
+ }
+diff --git a/src/test/java/socialuna/datos/ListaPublicacionesTest.java b/src/test/java/socialuna/datos/ListaPublicacionesTest.java
+index 4731b2d..2a74640 100644
+--- a/src/test/java/socialuna/datos/ListaPublicacionesTest.java
++++ b/src/test/java/socialuna/datos/ListaPublicacionesTest.java
+@@ -161,4 +161,36 @@ class ListaPublicacionesTest {
+         assertEquals("Texto propio", lista.buscarPorId("P1").getTexto());
+         assertEquals(0, lista.combinarCon(new ListaPublicaciones()));
+     }
++
++    @Test
++    void combinarConReemplazaLosMeGustaPorLosDelDisco() {
++        Publicacion enMemoria = pub("P1", "1", "2026-11-01 10:00:00");
++        enMemoria.agregarMeGusta("2");
++        enMemoria.agregarMeGusta("3");
++        lista.agregar(enMemoria);
++
++        // En el archivo, a "3" ya no le gusta y a "4" sí
++        ListaPublicaciones deDisco = new ListaPublicaciones();
++        Publicacion actualizada = pub("P1", "1", "2026-11-01 10:00:00");
++        actualizada.agregarMeGusta("2");
++        actualizada.agregarMeGusta("4");
++        deDisco.agregar(actualizada);
++
++        lista.combinarCon(deDisco);
++
++        assertEquals(java.util.List.of("2", "4"), java.util.List.copyOf(lista.buscarPorId("P1").getMeGusta()));
++    }
++
++    @Test
++    void combinarConQuitaLosMeGustaQueYaNoEstanEnElDisco() {
++        Publicacion enMemoria = pub("P1", "1", "2026-11-01 10:00:00");
++        enMemoria.agregarMeGusta("2");
++        lista.agregar(enMemoria);
++        ListaPublicaciones deDisco = new ListaPublicaciones();
++        deDisco.agregar(pub("P1", "1", "2026-11-01 10:00:00"));
++
++        lista.combinarCon(deDisco);
++
++        assertEquals(0, lista.buscarPorId("P1").cantidadMeGusta());
++    }
+ }
+diff --git a/src/test/java/socialuna/modelo/PublicacionMeGustaTest.java b/src/test/java/socialuna/modelo/PublicacionMeGustaTest.java
+new file mode 100644
+index 0000000..79896c9
+--- /dev/null
++++ b/src/test/java/socialuna/modelo/PublicacionMeGustaTest.java
+@@ -0,0 +1,122 @@
++package socialuna.modelo;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++import java.util.Arrays;
++import java.util.List;
++import java.util.Set;
++
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++
++import com.google.gson.Gson;
++import com.google.gson.GsonBuilder;
++
++/** "Me gusta" de una publicación: conjunto de IDs sin repetidos que no altera el JSON si está vacío. */
++class PublicacionMeGustaTest {
++
++    private Publicacion publicacion;
++
++    @BeforeEach
++    void preparar() {
++        publicacion = new Publicacion("P1", "1", "Hola", "2026-11-01 10:00:00");
++    }
++
++    @Test
++    void alInicioANadieLeGusta() {
++        assertEquals(0, publicacion.cantidadMeGusta());
++        assertFalse(publicacion.leGustaA("2"));
++        assertTrue(publicacion.getMeGusta().isEmpty());
++    }
++
++    @Test
++    void agregarMeGustaCuentaUnaVezPorUsuario() {
++        assertTrue(publicacion.agregarMeGusta("2"));
++        assertFalse(publicacion.agregarMeGusta("2")); // repetido: no cuenta dos veces
++        assertTrue(publicacion.agregarMeGusta("3"));
++
++        assertEquals(2, publicacion.cantidadMeGusta());
++        assertTrue(publicacion.leGustaA("2"));
++        assertFalse(publicacion.leGustaA("9"));
++        assertFalse(publicacion.leGustaA(null));
++    }
++
++    @Test
++    void quitarMeGusta() {
++        publicacion.agregarMeGusta("2");
++
++        assertTrue(publicacion.quitarMeGusta("2"));
++        assertFalse(publicacion.quitarMeGusta("2")); // ya no estaba
++        assertEquals(0, publicacion.cantidadMeGusta());
++    }
++
++    @Test
++    void agregarMeGustaSinIdLanzaError() {
++        assertThrows(IllegalArgumentException.class, () -> publicacion.agregarMeGusta(null));
++        assertThrows(IllegalArgumentException.class, () -> publicacion.agregarMeGusta("  "));
++    }
++
++    @Test
++    void getMeGustaEsUnaCopiaDeSoloLectura() {
++        publicacion.agregarMeGusta("2");
++
++        Set<String> copia = publicacion.getMeGusta();
++
++        assertThrows(UnsupportedOperationException.class, () -> copia.add("3"));
++        assertEquals(1, publicacion.cantidadMeGusta());
++    }
++
++    @Test
++    void conservaElOrdenEnQueDieronMeGusta() {
++        publicacion.agregarMeGusta("3");
++        publicacion.agregarMeGusta("1");
++        publicacion.agregarMeGusta("2");
++
++        assertEquals(List.of("3", "1", "2"), List.copyOf(publicacion.getMeGusta()));
++    }
++
++    @Test
++    void reemplazarMeGustaIgnoraVaciosYRepetidos() {
++        publicacion.agregarMeGusta("9");
++
++        publicacion.reemplazarMeGusta(Arrays.asList("2", null, " ", "2", "3"));
++
++        assertEquals(List.of("2", "3"), List.copyOf(publicacion.getMeGusta()));
++    }
++
++    @Test
++    void sinMeGustaElJsonNoTraeElCampo() {
++        Gson gson = new GsonBuilder().create();
++
++        assertFalse(gson.toJson(publicacion).contains("meGusta"));
++
++        publicacion.agregarMeGusta("2");
++        publicacion.quitarMeGusta("2"); // vuelve a quedar sin campo
++        assertFalse(gson.toJson(publicacion).contains("meGusta"));
++    }
++
++    @Test
++    void unJsonAnteriorSinElCampoSeLeeSinMeGusta() {
++        Publicacion leida = new Gson().fromJson(
++                "{\"id\":\"P1\",\"idAutor\":\"1\",\"texto\":\"Hola\",\"fechaHora\":\"2026-11-01 10:00:00\"}",
++                Publicacion.class);
++
++        leida.validar();
++
++        assertEquals(0, leida.cantidadMeGusta());
++    }
++
++    @Test
++    void validarDescartaIdsVaciosDeUnJsonEditadoAMano() {
++        Publicacion leida = new Gson().fromJson(
++                "{\"id\":\"P1\",\"idAutor\":\"1\",\"texto\":\"Hola\",\"fechaHora\":\"2026-11-01 10:00:00\","
++                        + "\"meGusta\":[\"2\",\"\",null]}", Publicacion.class);
++
++        leida.validar();
++
++        assertEquals(List.of("2"), List.copyOf(leida.getMeGusta()));
++    }
++}
+-- 
+2.55.0.windows.3
+

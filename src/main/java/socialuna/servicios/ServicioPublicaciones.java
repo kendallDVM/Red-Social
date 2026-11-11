@@ -16,6 +16,11 @@ import socialuna.modelo.Usuario;
  * aquí, así se pueden probar sin interfaz gráfica. Todo se consulta en memoria; el
  * archivo {@code publicaciones.json} solo se escribe al publicar.
  *
+ * <p><b>Datos compartidos entre instancias:</b> antes de publicar se releen las publicaciones
+ * del disco ({@link ContextoAplicacion#sincronizarPublicaciones()}). Así, si el programa está
+ * abierto dos veces, cada instancia ve lo que publicó la otra, no repite IDs y no borra
+ * publicaciones ajenas al guardar.
+ *
  * <p>Usa el Módulo 2 ({@link ServicioAmistades#obtenerIdsVisibles}) para saber de quién
  * se ven las publicaciones, y el Módulo 1 (la lista de usuarios) para mostrar el nombre
  * del autor.
@@ -67,6 +72,13 @@ public class ServicioPublicaciones {
                             + "El máximo es " + MAX_CARACTERES + ".");
         }
 
+        try {
+            contexto.sincronizarPublicaciones(); // primero lo que publicó otra instancia
+        } catch (PersistenciaException e) {
+            return ResultadoPublicacion.error(ResultadoPublicacion.Tipo.ERROR_PERSISTENCIA,
+                    "No se pudieron leer los datos actualizados; no se publicó el mensaje. " + e.getMessage());
+        }
+
         ListaPublicaciones lista = contexto.getPublicaciones();
         Publicacion nueva = new Publicacion(lista.generarId(), idAutor, mensaje, fechaHora);
         lista.agregar(nueva);
@@ -81,6 +93,23 @@ public class ServicioPublicaciones {
     }
 
     // ------------------------------------------------------------------ muro
+
+    /**
+     * Relee del disco las publicaciones, los usuarios y las amistades para ver los cambios
+     * hechos por otra instancia del programa. El muro lo llama al refrescarse.
+     *
+     * @return {@code true} si se pudo leer todo; {@code false} si algún archivo no se pudo
+     *         leer (en ese caso se sigue con lo que hay en memoria)
+     */
+    public boolean actualizarDesdeDisco() {
+        boolean todoBien = servicioAmistades.actualizarDesdeDisco();
+        try {
+            contexto.sincronizarPublicaciones();
+        } catch (PersistenciaException e) {
+            todoBien = false;
+        }
+        return todoBien;
+    }
 
     /**
      * <b>Muro general</b>: publicaciones del usuario y de sus amigos, de la más reciente
@@ -100,6 +129,84 @@ public class ServicioPublicaciones {
             propio.agregar(idUsuario);
         }
         return contexto.getPublicaciones().obtenerRecientesDe(propio);
+    }
+
+    // ------------------------------------------------------------------ me gusta
+
+    /**
+     * Da "me gusta" a una publicación, o lo quita si ya se lo había dado, y lo guarda en
+     * {@code publicaciones.json} en ese momento.
+     *
+     * <p>Solo se puede dar "me gusta" a las publicaciones que el usuario ve en su muro
+     * general: las propias y las de sus amigos. Antes de cambiar se releen del disco las
+     * publicaciones y las amistades, así se valida contra lo último que guardó cualquier
+     * instancia del programa. Si el guardado falla, el cambio se deshace en memoria.
+     *
+     * @param idUsuario     quien da el "me gusta" (el usuario activo)
+     * @param idPublicacion publicación elegida
+     * @return éxito (la publicación queda en {@link ResultadoPublicacion#getPublicacion()}) o el motivo del error
+     */
+    public ResultadoPublicacion alternarMeGusta(String idUsuario, String idPublicacion) {
+        if (idUsuario == null || idUsuario.isBlank() || !contexto.getUsuarios().existeId(idUsuario)) {
+            return ResultadoPublicacion.error(ResultadoPublicacion.Tipo.SIN_SESION,
+                    "Debe iniciar sesión para dar me gusta.");
+        }
+        servicioAmistades.actualizarDesdeDisco(); // si falla se sigue con lo que hay en memoria
+        try {
+            contexto.sincronizarPublicaciones();
+        } catch (PersistenciaException e) {
+            return ResultadoPublicacion.error(ResultadoPublicacion.Tipo.ERROR_PERSISTENCIA,
+                    "No se pudieron leer los datos actualizados; no se cambió nada. " + e.getMessage());
+        }
+
+        ListaPublicaciones lista = contexto.getPublicaciones();
+        Publicacion publicacion = lista.buscarPorId(idPublicacion);
+        if (publicacion == null) {
+            return ResultadoPublicacion.error(ResultadoPublicacion.Tipo.PUBLICACION_NO_EXISTE,
+                    "La publicación ya no existe.");
+        }
+        if (!servicioAmistades.obtenerIdsVisibles(idUsuario).contiene(publicacion.getIdAutor())) {
+            return ResultadoPublicacion.error(ResultadoPublicacion.Tipo.NO_PERMITIDO,
+                    "Solo puedes dar me gusta a tus publicaciones y a las de tus amigos.");
+        }
+
+        boolean daMeGusta = !publicacion.leGustaA(idUsuario);
+        cambiarMeGusta(publicacion, idUsuario, daMeGusta);
+        try {
+            contexto.getGestorArchivos().guardarPublicaciones(lista);
+        } catch (PersistenciaException e) {
+            cambiarMeGusta(publicacion, idUsuario, !daMeGusta);
+            return ResultadoPublicacion.error(ResultadoPublicacion.Tipo.ERROR_PERSISTENCIA,
+                    "No se pudo guardar el me gusta porque los datos no se guardaron. " + e.getMessage());
+        }
+        return ResultadoPublicacion.exito(daMeGusta ? "Te gusta esta publicación." : "Quitaste tu me gusta.",
+                publicacion);
+    }
+
+    private static void cambiarMeGusta(Publicacion publicacion, String idUsuario, boolean darMeGusta) {
+        if (darMeGusta) {
+            publicacion.agregarMeGusta(idUsuario);
+        } else {
+            publicacion.quitarMeGusta(idUsuario);
+        }
+    }
+
+    /**
+     * Nombres de los usuarios a quienes les gusta la publicación, en el orden en que dieron
+     * "me gusta". Se omiten los usuarios que ya no existen.
+     */
+    public ListaDinamica<String> obtenerNombresMeGusta(Publicacion publicacion) {
+        ListaDinamica<String> nombres = new ListaDinamica<>();
+        if (publicacion == null) {
+            return nombres;
+        }
+        for (String id : publicacion.getMeGusta()) {
+            Usuario usuario = contexto.getUsuarios().buscarPorId(id);
+            if (usuario != null) {
+                nombres.agregar(usuario.getNombre());
+            }
+        }
+        return nombres;
     }
 
     // ------------------------------------------------------------------ autor

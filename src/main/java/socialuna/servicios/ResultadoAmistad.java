@@ -3,7 +3,8 @@ package socialuna.servicios;
 import socialuna.modelo.Usuario;
 
 /**
- * Resultado de una operación de amistad (agregar o eliminar amigo).
+ * Resultado de una operación de amistad (enviar, aceptar, rechazar o cancelar una
+ * solicitud; agregar o eliminar amigo).
  *
  * <p>Sigue el mismo estilo que {@link ResultadoAutenticacion}: la interfaz gráfica solo
  * consulta {@link #esExitoso()} y muestra {@link #getMensaje()} en una alerta.
@@ -25,7 +26,13 @@ public final class ResultadoAmistad {
         YA_SON_AMIGOS,
         /** No eran amigos (al eliminar). */
         NO_SON_AMIGOS,
-        /** No se pudo guardar amistades.json; el cambio se deshizo. */
+        /** Ya hay una solicitud pendiente del usuario activo hacia el otro usuario. */
+        SOLICITUD_YA_ENVIADA,
+        /** El otro usuario ya le envió una solicitud al usuario activo: debe aceptarla o rechazarla. */
+        SOLICITUD_RECIBIDA_PENDIENTE,
+        /** La solicitud que se quiere aceptar, rechazar o cancelar ya no está pendiente. */
+        SOLICITUD_NO_EXISTE,
+        /** No se pudo leer o guardar amistades.json o solicitudes.json; el cambio se deshizo. */
         ERROR_PERSISTENCIA
     }
 
