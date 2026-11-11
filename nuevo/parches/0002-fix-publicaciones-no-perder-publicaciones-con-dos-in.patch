@@ -1,0 +1,288 @@
+From 3883904697e1c6979f4663fc9dc85dc36851c18d Mon Sep 17 00:00:00 2001
+From: marianomaalf <marianomaalf@gmail.com>
+Date: Wed, 11 Nov 2026 11:39:39 -0600
+Subject: [PATCH 2/6] fix(publicaciones): no perder publicaciones con dos
+ instancias abiertas
+
+Amistades, solicitudes y perfiles ya se releen del disco para soportar
+varias instancias del programa sobre la misma carpeta data/, pero las
+publicaciones solo vivian en memoria. Con dos instancias abiertas:
+- las dos generaban el mismo ID (P1, P2...), y
+- la segunda en guardar sobrescribia el archivo y borraba las publicaciones
+  de la otra, incluso al cerrar la aplicacion (guardarTodo).
+
+Ahora:
+- ListaPublicaciones.combinarCon agrega las publicaciones que faltan.
+- ContextoAplicacion.sincronizarPublicaciones la usa; guardarTodo la llama
+  antes de escribir.
+- ServicioPublicaciones.publicar sincroniza antes de generar el ID y
+  actualizarDesdeDisco refresca el muro con lo que publico la otra instancia.
+- PanelMuro.refrescar relee el disco, como ya hacen las otras pestanas.
+
+Incluye pruebas con dos contextos sobre la misma carpeta.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ .../socialuna/datos/ListaPublicaciones.java   | 19 ++++++
+ src/main/java/socialuna/gui/PanelMuro.java    |  6 +-
+ .../servicios/ContextoAplicacion.java         | 19 +++++-
+ .../servicios/ServicioPublicaciones.java      | 29 ++++++++++
+ .../datos/ListaPublicacionesTest.java         | 30 ++++++++++
+ .../servicios/ServicioPublicacionesTest.java  | 58 +++++++++++++++++++
+ 6 files changed, 159 insertions(+), 2 deletions(-)
+
+diff --git a/src/main/java/socialuna/datos/ListaPublicaciones.java b/src/main/java/socialuna/datos/ListaPublicaciones.java
+index 176b3b7..8f5e488 100644
+--- a/src/main/java/socialuna/datos/ListaPublicaciones.java
++++ b/src/main/java/socialuna/datos/ListaPublicaciones.java
+@@ -62,6 +62,25 @@ public class ListaPublicaciones {
+         return buscarPorId(id) != null;
+     }
+ 
++    /**
++     * Agrega a esta lista las publicaciones de {@code otra} que todavía no están (se
++     * comparan por ID). Las que ya existen no se tocan y nunca se eliminan publicaciones.
++     *
++     * <p>Sirve para incorporar lo que otra instancia del programa guardó en el archivo.
++     *
++     * @return cantidad de publicaciones agregadas
++     */
++    public int combinarCon(ListaPublicaciones otra) {
++        int agregadas = 0;
++        for (Publicacion p : otra.publicaciones) {
++            if (!existeId(p.getId())) {
++                publicaciones.agregar(p);
++                agregadas++;
++            }
++        }
++        return agregadas;
++    }
++
+     /** @return {@code true} si se encontró y eliminó la publicación */
+     public boolean eliminarPorId(String id) {
+         Publicacion p = buscarPorId(id);
+diff --git a/src/main/java/socialuna/gui/PanelMuro.java b/src/main/java/socialuna/gui/PanelMuro.java
+index b9169c5..52e3fdd 100644
+--- a/src/main/java/socialuna/gui/PanelMuro.java
++++ b/src/main/java/socialuna/gui/PanelMuro.java
+@@ -218,8 +218,12 @@ public class PanelMuro extends JPanel {
+         areaMensaje.requestFocusInWindow();
+     }
+ 
+-    /** Vuelve a cargar el muro elegido del usuario activo desde memoria. */
++    /**
++     * Vuelve a cargar el muro elegido del usuario activo. Antes relee el disco, para incluir
++     * lo que publicaron o aceptaron desde otra instancia del programa.
++     */
+     public final void refrescar() {
++        servicio.actualizarDesdeDisco();
+         lista.removeAll();
+         Usuario activo = Sesion.getUsuarioActivo();
+         if (activo == null) {
+diff --git a/src/main/java/socialuna/servicios/ContextoAplicacion.java b/src/main/java/socialuna/servicios/ContextoAplicacion.java
+index 65d512f..4a10a99 100644
+--- a/src/main/java/socialuna/servicios/ContextoAplicacion.java
++++ b/src/main/java/socialuna/servicios/ContextoAplicacion.java
+@@ -60,7 +60,8 @@ public class ContextoAplicacion {
+      * <ul>
+      *   <li><b>Usuarios:</b> antes de escribir se agregan los usuarios que otra instancia
+      *       registró en el archivo mientras esta estaba abierta; así no se borran cuentas.</li>
+-     *   <li><b>Publicaciones:</b> se guardan como antes.</li>
++     *   <li><b>Publicaciones:</b> antes de escribir se agregan las que otra instancia publicó
++     *       en el archivo mientras esta estaba abierta; así no se pierden publicaciones.</li>
+      *   <li><b>Amistades, solicitudes y perfiles:</b> <b>no</b> se reescriben aquí. El servicio de
+      *       amistades ya las guarda en el momento de cada cambio (y deshace el cambio en
+      *       memoria si falla), así que el archivo siempre está al día. Reescribirlas desde
+@@ -70,6 +71,7 @@ public class ContextoAplicacion {
+     public void guardarTodo() throws PersistenciaException {
+         sincronizarUsuarios();
+         gestorArchivos.guardarUsuarios(usuarios);
++        sincronizarPublicaciones();
+         gestorArchivos.guardarPublicaciones(publicaciones);
+     }
+ 
+@@ -101,6 +103,21 @@ public class ContextoAplicacion {
+         gestorArchivos.cargarPerfiles(perfiles, usuarios);
+     }
+ 
++    /**
++     * Agrega a memoria las publicaciones del archivo que todavía no están (por ejemplo,
++     * publicadas desde otra instancia del programa). La aplicación nunca elimina
++     * publicaciones, así que basta con agregar las que faltan.
++     *
++     * <p>La carga es transaccional: si el archivo está dañado, la memoria no cambia y se
++     * bloquea su escritura (reglas de {@link GestorArchivos}).
++     */
++    public void sincronizarPublicaciones() throws PersistenciaException {
++        sincronizarUsuarios();
++        ListaPublicaciones enDisco = new ListaPublicaciones();
++        gestorArchivos.cargarPublicaciones(enDisco, usuarios);
++        publicaciones.combinarCon(enDisco);
++    }
++
+     /** Agrega a memoria los usuarios del archivo que todavía no están (por ejemplo, registrados en otra instancia). */
+     private void sincronizarUsuarios() throws PersistenciaException {
+         ListaUsuarios enDisco = new ListaUsuarios();
+diff --git a/src/main/java/socialuna/servicios/ServicioPublicaciones.java b/src/main/java/socialuna/servicios/ServicioPublicaciones.java
+index de973e9..60fd502 100644
+--- a/src/main/java/socialuna/servicios/ServicioPublicaciones.java
++++ b/src/main/java/socialuna/servicios/ServicioPublicaciones.java
+@@ -16,6 +16,11 @@ import socialuna.modelo.Usuario;
+  * aquí, así se pueden probar sin interfaz gráfica. Todo se consulta en memoria; el
+  * archivo {@code publicaciones.json} solo se escribe al publicar.
+  *
++ * <p><b>Datos compartidos entre instancias:</b> antes de publicar se releen las publicaciones
++ * del disco ({@link ContextoAplicacion#sincronizarPublicaciones()}). Así, si el programa está
++ * abierto dos veces, cada instancia ve lo que publicó la otra, no repite IDs y no borra
++ * publicaciones ajenas al guardar.
++ *
+  * <p>Usa el Módulo 2 ({@link ServicioAmistades#obtenerIdsVisibles}) para saber de quién
+  * se ven las publicaciones, y el Módulo 1 (la lista de usuarios) para mostrar el nombre
+  * del autor.
+@@ -67,6 +72,13 @@ public class ServicioPublicaciones {
+                             + "El máximo es " + MAX_CARACTERES + ".");
+         }
+ 
++        try {
++            contexto.sincronizarPublicaciones(); // primero lo que publicó otra instancia
++        } catch (PersistenciaException e) {
++            return ResultadoPublicacion.error(ResultadoPublicacion.Tipo.ERROR_PERSISTENCIA,
++                    "No se pudieron leer los datos actualizados; no se publicó el mensaje. " + e.getMessage());
++        }
++
+         ListaPublicaciones lista = contexto.getPublicaciones();
+         Publicacion nueva = new Publicacion(lista.generarId(), idAutor, mensaje, fechaHora);
+         lista.agregar(nueva);
+@@ -82,6 +94,23 @@ public class ServicioPublicaciones {
+ 
+     // ------------------------------------------------------------------ muro
+ 
++    /**
++     * Relee del disco las publicaciones, los usuarios y las amistades para ver los cambios
++     * hechos por otra instancia del programa. El muro lo llama al refrescarse.
++     *
++     * @return {@code true} si se pudo leer todo; {@code false} si algún archivo no se pudo
++     *         leer (en ese caso se sigue con lo que hay en memoria)
++     */
++    public boolean actualizarDesdeDisco() {
++        boolean todoBien = servicioAmistades.actualizarDesdeDisco();
++        try {
++            contexto.sincronizarPublicaciones();
++        } catch (PersistenciaException e) {
++            todoBien = false;
++        }
++        return todoBien;
++    }
++
+     /**
+      * <b>Muro general</b>: publicaciones del usuario y de sus amigos, de la más reciente
+      * a la más antigua. Un usuario que no es amigo no aparece, aunque exista.
+diff --git a/src/test/java/socialuna/datos/ListaPublicacionesTest.java b/src/test/java/socialuna/datos/ListaPublicacionesTest.java
+index e144788..4731b2d 100644
+--- a/src/test/java/socialuna/datos/ListaPublicacionesTest.java
++++ b/src/test/java/socialuna/datos/ListaPublicacionesTest.java
+@@ -131,4 +131,34 @@ class ListaPublicacionesTest {
+         assertEquals("P1", lista.obtener(0).getId()); // sigue en orden de publicación
+         assertEquals("P2", lista.obtener(1).getId());
+     }
++
++    // ------------------------------------------------------------------ combinarCon
++
++    @Test
++    void combinarConAgregaSoloLasQueFaltan() {
++        lista.agregar(pub("P1", "1", "2026-11-01 10:00:00"));
++        ListaPublicaciones otra = new ListaPublicaciones();
++        otra.agregar(pub("P1", "1", "2026-11-01 10:00:00"));
++        otra.agregar(pub("P2", "2", "2026-11-02 10:00:00"));
++
++        int agregadas = lista.combinarCon(otra);
++
++        assertEquals(1, agregadas);
++        assertEquals(2, lista.tamano());
++        assertEquals("P2", lista.obtener(1).getId());
++    }
++
++    @Test
++    void combinarConNoEliminaNiReemplazaLasExistentes() {
++        Publicacion propia = new Publicacion("P1", "1", "Texto propio", "2026-11-01 10:00:00");
++        lista.agregar(propia);
++        ListaPublicaciones otra = new ListaPublicaciones();
++        otra.agregar(new Publicacion("P1", "2", "Texto distinto", "2026-11-05 10:00:00"));
++
++        lista.combinarCon(otra);
++
++        assertEquals(1, lista.tamano());
++        assertEquals("Texto propio", lista.buscarPorId("P1").getTexto());
++        assertEquals(0, lista.combinarCon(new ListaPublicaciones()));
++    }
+ }
+diff --git a/src/test/java/socialuna/servicios/ServicioPublicacionesTest.java b/src/test/java/socialuna/servicios/ServicioPublicacionesTest.java
+index 1a208da..a778966 100644
+--- a/src/test/java/socialuna/servicios/ServicioPublicacionesTest.java
++++ b/src/test/java/socialuna/servicios/ServicioPublicacionesTest.java
+@@ -253,4 +253,62 @@ class ServicioPublicacionesTest {
+ 
+         assertNull(servicio.obtenerAutor(p));
+     }
++
++    // ------------------------------------------------------------------ varias instancias
++
++    /** Simula una segunda instancia del programa: memoria propia, misma carpeta data/. */
++    private ServicioPublicaciones otraInstancia(ContextoAplicacion[] contextoDeSalida) {
++        ContextoAplicacion otro = new ContextoAplicacion(new GestorArchivos(carpetaTemporal));
++        otro.getUsuarios().agregar(ana);
++        otro.getUsuarios().agregar(luis);
++        otro.getUsuarios().agregar(sofia);
++        contextoDeSalida[0] = otro;
++        return new ServicioPublicaciones(otro, new ServicioAmistades(otro));
++    }
++
++    @Test
++    void publicarIncluyeLoQuePublicoOtraInstanciaYNoRepiteIds() throws Exception {
++        ContextoAplicacion[] otro = new ContextoAplicacion[1];
++        ServicioPublicaciones servicioB = otraInstancia(otro);
++
++        String idA = servicio.publicar("1", "de la instancia A").getPublicacion().getId();
++        // La instancia B no sabe de la publicación de A y publica la suya
++        String idB = servicioB.publicar("2", "de la instancia B").getPublicacion().getId();
++
++        assertEquals("P1", idA);
++        assertEquals("P2", idB);
++        assertEquals(2, otro[0].getPublicaciones().tamano());
++
++        ListaPublicaciones enDisco = new ListaPublicaciones();
++        new GestorArchivos(carpetaTemporal).cargarPublicaciones(enDisco, contexto.getUsuarios());
++        assertEquals(2, enDisco.tamano()); // ninguna se perdió
++    }
++
++    @Test
++    void cerrarLaAplicacionNoBorraPublicacionesDeOtraInstancia() throws Exception {
++        ContextoAplicacion[] otro = new ContextoAplicacion[1];
++        ServicioPublicaciones servicioB = otraInstancia(otro);
++        servicio.publicar("1", "de A");
++        servicioB.publicar("2", "de B"); // A todavía no la tiene en memoria
++
++        contexto.guardarTodo(); // A cierra con una memoria vieja
++
++        ListaPublicaciones enDisco = new ListaPublicaciones();
++        new GestorArchivos(carpetaTemporal).cargarPublicaciones(enDisco, contexto.getUsuarios());
++        assertEquals(2, enDisco.tamano());
++        assertEquals(2, contexto.getPublicaciones().tamano());
++    }
++
++    @Test
++    void actualizarDesdeDiscoIncorporaPublicacionesDeOtraInstancia() {
++        ContextoAplicacion[] otro = new ContextoAplicacion[1];
++        ServicioPublicaciones servicioB = otraInstancia(otro);
++        servicioB.publicar("1", "publicada en B");
++        assertTrue(contexto.getPublicaciones().estaVacia());
++
++        assertTrue(servicio.actualizarDesdeDisco());
++
++        assertEquals(1, contexto.getPublicaciones().tamano());
++        assertEquals("publicada en B", servicio.obtenerMuroPersonal("1").obtener(0).getTexto());
++    }
+ }
+-- 
+2.55.0.windows.3
+

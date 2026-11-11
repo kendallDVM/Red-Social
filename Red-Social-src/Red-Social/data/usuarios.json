@@ -1,0 +1,26 @@
+[
+  {
+    "id": "1234",
+    "nombre": "david",
+    "usuario": "david12",
+    "contrasena": "$2a$12$C.g.UCq5zRVxlhqrVFPsyeI1KMpDcdq0tMNQkZ2gnZnEhVLwmf32W"
+  },
+  {
+    "id": "2026001",
+    "nombre": "Kendall",
+    "usuario": "kendall",
+    "contrasena": "$2a$12$8qD0kB.1BG28NGrAWIlzsOyxbkWJI9uAh/IvFuNx66OgPQ1jQwYtO"
+  },
+  {
+    "id": "2026002",
+    "nombre": "Greivin",
+    "usuario": "greivin",
+    "contrasena": "$2a$12$TWJinHwmsEAkcZ9lTUKcieIXzM4mBT8aIpHDYl2vG07VPz7td4uH6"
+  },
+  {
+    "id": "2026003",
+    "nombre": "Mariano",
+    "usuario": "mariano",
+    "contrasena": "$2a$12$5dCfy42schQScSwSwJ5pvuJK2vOHt.t4DZum/aI7PutgE34iiZYL."
+  }
+]
