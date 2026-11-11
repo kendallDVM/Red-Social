@@ -16,23 +16,5 @@
     "nombre": "Mariano",
     "usuario": "mariano",
     "contrasena": "$2a$12$5dCfy42schQScSwSwJ5pvuJK2vOHt.t4DZum/aI7PutgE34iiZYL."
-  },
-  {
-    "id": "208710570",
-    "nombre": "Mariano Martínez Alfaro",
-    "usuario": "Mariano2",
-    "contrasena": "$2a$12$ZPTiWMHuBaXLTp4HPrPFM.4FbYGrM2pEa5.Hyw1Ti4OF.5KlK4GxC"
-  },
-  {
-    "id": "123",
-    "nombre": "david",
-    "usuario": "david",
-    "contrasena": "$2a$12$PRM9rUuixZvEQUZYkQ6l1OEeG8E76W3kp4lVonKKvJkIKgMTKHaYe"
-  },
-  {
-    "id": "12345",
-    "nombre": "Maria",
-    "usuario": "Maria1234",
-    "contrasena": "$2a$12$LtfI9gPld8hWDY5Ice/hfOHiw7Lym2ELb62hQS.7PQqfTHLFa2FfW"
   }
 ]
