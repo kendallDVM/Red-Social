@@ -5,6 +5,7 @@ import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.GridLayout;
 import java.util.Objects;
+import java.util.function.Consumer;
 
 import javax.swing.BorderFactory;
 import javax.swing.Box;
@@ -54,11 +55,15 @@ public class PanelBuscarUsuarios extends JPanel {
 
     private final ServicioAmistades servicio;
     private final Runnable alCambiarAmigos;
+    /** Abre el perfil de un usuario (por ID); {@code null} si esta ventana no ofrece perfiles. */
+    private final Consumer<String> abrirPerfil;
 
     private final JTextField campoBusqueda = Estilos.campoTexto(24);
     private final JButton botonBuscar = Estilos.botonPrimario("Buscar");
     /** Acción principal; su texto cambia según el estado del usuario seleccionado. */
     private final JButton botonAccion = Estilos.botonPrimario("Enviar solicitud");
+    /** Abre el perfil del usuario seleccionado; no cambia la relación de amistad. */
+    private final JButton botonVerPerfil = Estilos.botonSecundario("Ver perfil");
     /** Solo se muestra cuando el usuario seleccionado le envió una solicitud al usuario activo. */
     private final JButton botonRechazar = Estilos.botonSecundario("Rechazar");
     private final JLabel lblResumen = Estilos.textoSecundario(" ");
@@ -88,8 +93,17 @@ public class PanelBuscarUsuarios extends JPanel {
      *                        ejemplo, para refrescar las otras pestañas); puede ser {@code null}
      */
     public PanelBuscarUsuarios(ServicioAmistades servicio, Runnable alCambiarAmigos) {
+        this(servicio, alCambiarAmigos, null);
+    }
+
+    /**
+     * @param abrirPerfil recibe el ID del usuario seleccionado al pulsar «Ver perfil»;
+     *                    si es {@code null}, el botón no se muestra
+     */
+    public PanelBuscarUsuarios(ServicioAmistades servicio, Runnable alCambiarAmigos, Consumer<String> abrirPerfil) {
         this.servicio = Objects.requireNonNull(servicio, "El servicio no puede ser nulo.");
         this.alCambiarAmigos = alCambiarAmigos != null ? alCambiarAmigos : () -> { };
+        this.abrirPerfil = abrirPerfil;
         construirInterfaz();
         actualizarBotones();
     }
@@ -140,6 +154,12 @@ public class PanelBuscarUsuarios extends JPanel {
         campoBusqueda.addActionListener(e -> buscar()); // Enter en el cuadro de texto
         botonAccion.addActionListener(e -> ejecutarAccionPrincipal());
         botonRechazar.addActionListener(e -> rechazarSeleccionado());
+        botonVerPerfil.addActionListener(e -> {
+            UsuarioEncontrado sel = seleccionado();
+            if (sel != null && abrirPerfil != null) {
+                abrirPerfil.accept(sel.getUsuario().getId()); // solo consulta: no cambia la relación
+            }
+        });
         tabla.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 actualizarBotones();
@@ -173,6 +193,10 @@ public class PanelBuscarUsuarios extends JPanel {
         botones.setOpaque(false);
         botonRechazar.setName("botonRechazar");
         botonAccion.setName("botonAccion");
+        botonVerPerfil.setName("botonVerPerfil");
+        botonVerPerfil.setVisible(abrirPerfil != null);
+        botones.add(botonVerPerfil);
+        botones.add(Box.createHorizontalStrut(8));
         botones.add(botonRechazar);
         botones.add(Box.createHorizontalStrut(8));
         botones.add(botonAccion);
@@ -302,6 +326,7 @@ public class PanelBuscarUsuarios extends JPanel {
     private void actualizarBotones() {
         UsuarioEncontrado sel = seleccionado();
         botonRechazar.setVisible(false);
+        botonVerPerfil.setEnabled(sel != null);
         if (sel == null) {
             lblSeleccionado.setText(resultados.estaVacia()
                     ? "Busca un usuario para ver las acciones disponibles."

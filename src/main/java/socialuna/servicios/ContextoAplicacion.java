@@ -3,6 +3,7 @@ package socialuna.servicios;
 import java.util.Objects;
 
 import socialuna.datos.GestorArchivos;
+import socialuna.datos.ListaPerfiles;
 import socialuna.datos.ListaPublicaciones;
 import socialuna.datos.ListaSolicitudes;
 import socialuna.datos.ListaUsuarios;
@@ -35,6 +36,7 @@ public class ContextoAplicacion {
     private final ListaPublicaciones publicaciones;
     private final RedAmistades amistades;
     private final ListaSolicitudes solicitudes;
+    private final ListaPerfiles perfiles;
 
     public ContextoAplicacion(GestorArchivos gestorArchivos) {
         this.gestorArchivos = Objects.requireNonNull(gestorArchivos, "El gestor de archivos no puede ser nulo.");
@@ -42,12 +44,14 @@ public class ContextoAplicacion {
         this.publicaciones = new ListaPublicaciones();
         this.amistades = new RedAmistades();
         this.solicitudes = new ListaSolicitudes();
+        this.perfiles = new ListaPerfiles();
     }
 
     /** Carga todos los archivos de {@code data/}. Se llama una vez al iniciar. */
     public void cargarTodo() throws PersistenciaException {
         gestorArchivos.cargarTodo(usuarios, publicaciones, amistades);
         gestorArchivos.cargarSolicitudes(solicitudes, usuarios, amistades); // valida contra usuarios y amistades
+        gestorArchivos.cargarPerfiles(perfiles, usuarios);
     }
 
     /**
@@ -57,7 +61,7 @@ public class ContextoAplicacion {
      *   <li><b>Usuarios:</b> antes de escribir se agregan los usuarios que otra instancia
      *       registró en el archivo mientras esta estaba abierta; así no se borran cuentas.</li>
      *   <li><b>Publicaciones:</b> se guardan como antes.</li>
-     *   <li><b>Amistades y solicitudes:</b> <b>no</b> se reescriben aquí. El servicio de
+     *   <li><b>Amistades, solicitudes y perfiles:</b> <b>no</b> se reescriben aquí. El servicio de
      *       amistades ya las guarda en el momento de cada cambio (y deshace el cambio en
      *       memoria si falla), así que el archivo siempre está al día. Reescribirlas desde
      *       memoria borraría los cambios hechos por otra instancia del programa.</li>
@@ -85,6 +89,16 @@ public class ContextoAplicacion {
         sincronizarUsuarios();
         gestorArchivos.cargarAmistades(amistades, usuarios);
         gestorArchivos.cargarSolicitudes(solicitudes, usuarios, amistades);
+    }
+
+    /**
+     * Actualiza la memoria con los usuarios y los perfiles que hay en disco, para ver los
+     * cambios hechos por otra instancia del programa. Los perfiles se <b>recargan</b> del
+     * archivo, que es la fuente de verdad porque cada edición se guarda en el momento.
+     */
+    public void sincronizarPerfiles() throws PersistenciaException {
+        sincronizarUsuarios();
+        gestorArchivos.cargarPerfiles(perfiles, usuarios);
     }
 
     /** Agrega a memoria los usuarios del archivo que todavía no están (por ejemplo, registrados en otra instancia). */
@@ -117,5 +131,10 @@ public class ContextoAplicacion {
     /** Solicitudes de amistad pendientes. */
     public ListaSolicitudes getSolicitudes() {
         return solicitudes;
+    }
+
+    /** Información opcional de los perfiles. */
+    public ListaPerfiles getPerfiles() {
+        return perfiles;
     }
 }

@@ -4,8 +4,10 @@ import java.awt.BorderLayout;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.util.Objects;
+import java.util.function.Consumer;
 
 import javax.swing.BorderFactory;
+import javax.swing.Box;
 import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
@@ -37,7 +39,10 @@ public class PanelMisAmigos extends JPanel {
 
     private final ServicioAmistades servicio;
     private final Runnable alCambiarAmigos;
+    /** Abre el perfil de un usuario (por ID); {@code null} si esta ventana no ofrece perfiles. */
+    private final Consumer<String> abrirPerfil;
 
+    private final JButton botonVerPerfil = Estilos.botonPrimario("Ver perfil");
     private final JButton botonEliminar = Estilos.botonSecundario("Eliminar amigo");
     private final JLabel lblResumen = Estilos.textoSecundario(" ");
 
@@ -56,8 +61,17 @@ public class PanelMisAmigos extends JPanel {
      *                        refrescar la pestaña "Buscar usuarios"); puede ser {@code null}
      */
     public PanelMisAmigos(ServicioAmistades servicio, Runnable alCambiarAmigos) {
+        this(servicio, alCambiarAmigos, null);
+    }
+
+    /**
+     * @param abrirPerfil recibe el ID del amigo seleccionado al pulsar «Ver perfil»;
+     *                    si es {@code null}, el botón no se muestra
+     */
+    public PanelMisAmigos(ServicioAmistades servicio, Runnable alCambiarAmigos, Consumer<String> abrirPerfil) {
         this.servicio = Objects.requireNonNull(servicio, "El servicio no puede ser nulo.");
         this.alCambiarAmigos = alCambiarAmigos != null ? alCambiarAmigos : () -> { };
+        this.abrirPerfil = abrirPerfil;
         construirInterfaz();
         refrescar();
     }
@@ -94,11 +108,17 @@ public class PanelMisAmigos extends JPanel {
         inferior.add(lblResumen, BorderLayout.WEST);
         JPanel botones = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
         botones.setOpaque(false);
+        botonVerPerfil.setName("botonVerPerfilAmigo");
+        botonVerPerfil.setVisible(abrirPerfil != null);
+        botones.add(botonVerPerfil);
+        botones.add(Box.createHorizontalStrut(8));
+        botonEliminar.setName("botonEliminarAmigo");
         botones.add(botonEliminar);
         inferior.add(botones, BorderLayout.EAST);
         add(inferior, BorderLayout.SOUTH);
 
         botonEliminar.addActionListener(e -> eliminarSeleccionado());
+        botonVerPerfil.addActionListener(e -> verPerfilSeleccionado());
     }
 
     /**
@@ -122,6 +142,19 @@ public class PanelMisAmigos extends JPanel {
             lblResumen.setText("Aún no tienes amigos. Envía solicitudes desde la pestaña \"Buscar usuarios\".");
         } else {
             lblResumen.setText(cantidad == 1 ? "Tienes 1 amigo" : "Tienes " + cantidad + " amigos");
+        }
+    }
+
+    /** Abre el perfil del amigo seleccionado (solo consulta). */
+    private void verPerfilSeleccionado() {
+        int fila = tabla.getSelectedRow();
+        if (fila < 0) {
+            JOptionPane.showMessageDialog(this, "Seleccione un amigo de la lista.",
+                    TITULO_ALERTA, JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        if (abrirPerfil != null) {
+            abrirPerfil.accept((String) modelo.getValueAt(fila, COLUMNA_ID));
         }
     }
 

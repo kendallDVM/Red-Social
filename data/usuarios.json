@@ -28,5 +28,11 @@
     "nombre": "david",
     "usuario": "david",
     "contrasena": "$2a$12$PRM9rUuixZvEQUZYkQ6l1OEeG8E76W3kp4lVonKKvJkIKgMTKHaYe"
+  },
+  {
+    "id": "12345",
+    "nombre": "Maria",
+    "usuario": "Maria1234",
+    "contrasena": "$2a$12$LtfI9gPld8hWDY5Ice/hfOHiw7Lym2ELb62hQS.7PQqfTHLFa2FfW"
   }
 ]
