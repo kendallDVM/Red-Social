@@ -17,7 +17,9 @@ import com.google.gson.JsonParseException;
 import com.google.gson.Strictness;
 
 import socialuna.modelo.Amistad;
+import socialuna.modelo.Perfil;
 import socialuna.modelo.Publicacion;
+import socialuna.modelo.SolicitudAmistad;
 import socialuna.modelo.Usuario;
 
 /**
@@ -50,6 +52,8 @@ public class GestorArchivos {
     public static final String ARCHIVO_USUARIOS = "usuarios.json";
     public static final String ARCHIVO_AMISTADES = "amistades.json";
     public static final String ARCHIVO_PUBLICACIONES = "publicaciones.json";
+    public static final String ARCHIVO_SOLICITUDES = "solicitudes.json";
+    public static final String ARCHIVO_PERFILES = "perfiles.json";
 
     private static final DateTimeFormatter FORMATO_RESPALDO = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
@@ -67,6 +71,12 @@ public class GestorArchivos {
 
     /** Igual que {@link #escrituraUsuariosBloqueada}, pero para publicaciones.json. */
     private boolean escrituraPublicacionesBloqueada;
+
+    /** Igual que {@link #escrituraUsuariosBloqueada}, pero para solicitudes.json. */
+    private boolean escrituraSolicitudesBloqueada;
+
+    /** Igual que {@link #escrituraUsuariosBloqueada}, pero para perfiles.json. */
+    private boolean escrituraPerfilesBloqueada;
 
     /** Usa la carpeta {@code data/} relativa al directorio de ejecución (la raíz del proyecto). */
     public GestorArchivos() {
@@ -97,6 +107,14 @@ public class GestorArchivos {
 
     public Path getRutaPublicaciones() {
         return directorio.resolve(ARCHIVO_PUBLICACIONES);
+    }
+
+    public Path getRutaSolicitudes() {
+        return directorio.resolve(ARCHIVO_SOLICITUDES);
+    }
+
+    public Path getRutaPerfiles() {
+        return directorio.resolve(ARCHIVO_PERFILES);
     }
 
     // ------------------------------------------------------------------ usuarios
@@ -303,6 +321,225 @@ public class GestorArchivos {
         String json = gson.toJson(origen.obtenerAmistades().aArreglo(new Amistad[0]));
         crearDirectorioSiNoExiste();
         escribirTextoAtomico(getRutaAmistades(), json);
+    }
+
+    // ------------------------------------------------------------------ solicitudes de amistad
+
+    /**
+     * Carga {@code solicitudes.json} (solicitudes de amistad pendientes) en {@code destino}.
+     * Debe llamarse <b>después</b> de cargar usuarios y amistades, porque los usa para validar.
+     *
+     * <p>Reglas (además de las generales de la clase):
+     * <ul>
+     *   <li>Se ignoran los registros incompletos, de un usuario a sí mismo o con un ID que
+     *       no existe en {@code usuarios}.</li>
+     *   <li>Se ignoran las solicitudes entre usuarios que ya son amigos (quedaron de una
+     *       aceptación cuyo segundo guardado falló).</li>
+     *   <li>Duplicados y solicitudes cruzadas (A → B y B → A): solo se conserva la primera.</li>
+     * </ul>
+     * Lo ignorado desaparece del archivo la próxima vez que se guarde.
+     *
+     * @return cantidad de solicitudes cargadas
+     * @throws PersistenciaException si el archivo no se puede leer o no es un JSON válido.
+     *                               En ese caso {@code destino} no se modifica y se bloquea
+     *                               {@link #guardarSolicitudes}.
+     */
+    public int cargarSolicitudes(ListaSolicitudes destino, ListaUsuarios usuarios, RedAmistades amistades)
+            throws PersistenciaException {
+        Objects.requireNonNull(destino, "La lista de solicitudes no puede ser nula.");
+        Objects.requireNonNull(usuarios, "La lista de usuarios no puede ser nula.");
+        Objects.requireNonNull(amistades, "La red de amistades no puede ser nula.");
+        try {
+            int cantidad = leerSolicitudesEn(destino, usuarios, amistades);
+            escrituraSolicitudesBloqueada = false;
+            return cantidad;
+        } catch (PersistenciaException e) {
+            escrituraSolicitudesBloqueada = true;
+            throw e;
+        }
+    }
+
+    /**
+     * Indica si {@link #guardarSolicitudes} está bloqueado porque la última carga de
+     * solicitudes falló.
+     */
+    public boolean isEscrituraSolicitudesBloqueada() {
+        return escrituraSolicitudesBloqueada;
+    }
+
+    /** Lectura transaccional de solicitudes.json (ver {@link #cargarSolicitudes}). */
+    private int leerSolicitudesEn(ListaSolicitudes destino, ListaUsuarios usuarios, RedAmistades amistades)
+            throws PersistenciaException {
+        Path ruta = getRutaSolicitudes();
+
+        crearDirectorioSiNoExiste();
+        if (Files.notExists(ruta)) {
+            escribirTexto(ruta, "[]");
+            destino.limpiar();
+            return 0;
+        }
+
+        String contenido = leerTexto(ruta);
+        if (contenido.isBlank()) {
+            destino.limpiar();
+            return 0;
+        }
+
+        SolicitudAmistad[] leidas;
+        try {
+            leidas = gson.fromJson(contenido, SolicitudAmistad[].class);
+        } catch (JsonParseException e) {
+            throw archivoDanado(ruta, "el contenido no es un JSON válido de solicitudes", e);
+        }
+
+        // Se arma primero en una lista temporal; la real solo se toca si todo salió bien.
+        ListaSolicitudes temporal = new ListaSolicitudes();
+        if (leidas != null) {
+            for (SolicitudAmistad s : leidas) {
+                if (esSolicitudValida(s, usuarios, amistades)) {
+                    temporal.agregar(s.getIdRemitente(), s.getIdDestinatario()); // ignora duplicados y cruzadas
+                }
+            }
+        }
+
+        destino.reemplazarCon(temporal);
+        return destino.tamano();
+    }
+
+    /** Una solicitud se acepta si está completa, ambos usuarios existen y aún no son amigos. */
+    private static boolean esSolicitudValida(SolicitudAmistad s, ListaUsuarios usuarios, RedAmistades amistades) {
+        if (s == null) {
+            return false;
+        }
+        try {
+            s.validar();
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+        return usuarios.existeId(s.getIdRemitente()) && usuarios.existeId(s.getIdDestinatario())
+                && !amistades.sonAmigos(s.getIdRemitente(), s.getIdDestinatario());
+    }
+
+    /**
+     * Guarda todas las solicitudes pendientes en {@code solicitudes.json} (escritura atómica).
+     *
+     * @throws PersistenciaException si no se puede escribir o la escritura está bloqueada
+     */
+    public void guardarSolicitudes(ListaSolicitudes origen) throws PersistenciaException {
+        Objects.requireNonNull(origen, "La lista de solicitudes no puede ser nula.");
+        if (escrituraSolicitudesBloqueada) {
+            throw new PersistenciaException("No se guardaron las solicitudes de amistad: " + ARCHIVO_SOLICITUDES
+                    + " no se pudo cargar correctamente y se protegió para no perder sus datos."
+                    + " Revise o restaure el archivo y vuelva a abrir la aplicación.");
+        }
+        String json = gson.toJson(origen.obtenerTodas().aArreglo(new SolicitudAmistad[0]));
+        crearDirectorioSiNoExiste();
+        escribirTextoAtomico(getRutaSolicitudes(), json);
+    }
+
+    // ------------------------------------------------------------------ perfiles
+
+    /**
+     * Carga {@code perfiles.json} (información opcional de los perfiles) en {@code destino}.
+     * Debe llamarse <b>después</b> de cargar los usuarios, porque los usa para validar.
+     *
+     * <p>Reglas (además de las generales de la clase):
+     * <ul>
+     *   <li>Se ignoran los registros sin ID, de usuarios que no existen, con campos
+     *       inválidos o vacíos, y los repetidos (se conserva el primero).</li>
+     *   <li>Los usuarios sin registro tienen el perfil vacío: no es un error.</li>
+     * </ul>
+     *
+     * @return cantidad de perfiles cargados
+     * @throws PersistenciaException si el archivo no se puede leer o no es un JSON válido.
+     *                               En ese caso {@code destino} no se modifica y se bloquea
+     *                               {@link #guardarPerfiles}.
+     */
+    public int cargarPerfiles(ListaPerfiles destino, ListaUsuarios usuarios) throws PersistenciaException {
+        Objects.requireNonNull(destino, "La lista de perfiles no puede ser nula.");
+        Objects.requireNonNull(usuarios, "La lista de usuarios no puede ser nula.");
+        try {
+            int cantidad = leerPerfilesEn(destino, usuarios);
+            escrituraPerfilesBloqueada = false;
+            return cantidad;
+        } catch (PersistenciaException e) {
+            escrituraPerfilesBloqueada = true;
+            throw e;
+        }
+    }
+
+    /** Indica si {@link #guardarPerfiles} está bloqueado porque la última carga de perfiles falló. */
+    public boolean isEscrituraPerfilesBloqueada() {
+        return escrituraPerfilesBloqueada;
+    }
+
+    /** Lectura transaccional de perfiles.json (ver {@link #cargarPerfiles}). */
+    private int leerPerfilesEn(ListaPerfiles destino, ListaUsuarios usuarios) throws PersistenciaException {
+        Path ruta = getRutaPerfiles();
+
+        crearDirectorioSiNoExiste();
+        if (Files.notExists(ruta)) {
+            escribirTexto(ruta, "[]");
+            destino.limpiar();
+            return 0;
+        }
+
+        String contenido = leerTexto(ruta);
+        if (contenido.isBlank()) {
+            destino.limpiar();
+            return 0;
+        }
+
+        Perfil[] leidos;
+        try {
+            leidos = gson.fromJson(contenido, Perfil[].class);
+        } catch (JsonParseException e) {
+            throw archivoDanado(ruta, "el contenido no es un JSON válido de perfiles", e);
+        }
+
+        // Se arma primero en una lista temporal; la real solo se toca si todo salió bien.
+        ListaPerfiles temporal = new ListaPerfiles();
+        if (leidos != null) {
+            for (Perfil perfil : leidos) {
+                if (esPerfilValido(perfil, usuarios) && temporal.buscar(perfil.getIdUsuario()) == null) {
+                    temporal.guardar(perfil); // un perfil vacío no se guarda
+                }
+            }
+        }
+
+        destino.reemplazarCon(temporal);
+        return destino.tamano();
+    }
+
+    /** Un perfil se acepta si sus campos son válidos y su usuario existe. */
+    private static boolean esPerfilValido(Perfil perfil, ListaUsuarios usuarios) {
+        if (perfil == null) {
+            return false;
+        }
+        try {
+            perfil.validar();
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+        return usuarios.existeId(perfil.getIdUsuario());
+    }
+
+    /**
+     * Guarda todos los perfiles en {@code perfiles.json} (escritura atómica, UTF-8).
+     * Los campos sin completar no se escriben.
+     *
+     * @throws PersistenciaException si no se puede escribir o la escritura está bloqueada
+     */
+    public void guardarPerfiles(ListaPerfiles origen) throws PersistenciaException {
+        Objects.requireNonNull(origen, "La lista de perfiles no puede ser nula.");
+        if (escrituraPerfilesBloqueada) {
+            throw new PersistenciaException("No se guardaron los perfiles: " + ARCHIVO_PERFILES
+                    + " no se pudo cargar correctamente y se protegió para no perder sus datos."
+                    + " Revise o restaure el archivo y vuelva a abrir la aplicación.");
+        }
+        String json = gson.toJson(origen.obtenerTodos().aArreglo(new Perfil[0]));
+        crearDirectorioSiNoExiste();
+        escribirTextoAtomico(getRutaPerfiles(), json);
     }
 
     // ------------------------------------------------------------------ publicaciones
