@@ -218,8 +218,12 @@ public class PanelMuro extends JPanel {
         areaMensaje.requestFocusInWindow();
     }
 
-    /** Vuelve a cargar el muro elegido del usuario activo desde memoria. */
+    /**
+     * Vuelve a cargar el muro elegido del usuario activo. Antes relee el disco, para incluir
+     * lo que publicaron o aceptaron desde otra instancia del programa.
+     */
     public final void refrescar() {
+        servicio.actualizarDesdeDisco();
         lista.removeAll();
         Usuario activo = Sesion.getUsuarioActivo();
         if (activo == null) {

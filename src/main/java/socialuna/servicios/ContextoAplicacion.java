@@ -60,7 +60,8 @@ public class ContextoAplicacion {
      * <ul>
      *   <li><b>Usuarios:</b> antes de escribir se agregan los usuarios que otra instancia
      *       registró en el archivo mientras esta estaba abierta; así no se borran cuentas.</li>
-     *   <li><b>Publicaciones:</b> se guardan como antes.</li>
+     *   <li><b>Publicaciones:</b> antes de escribir se agregan las que otra instancia publicó
+     *       en el archivo mientras esta estaba abierta; así no se pierden publicaciones.</li>
      *   <li><b>Amistades, solicitudes y perfiles:</b> <b>no</b> se reescriben aquí. El servicio de
      *       amistades ya las guarda en el momento de cada cambio (y deshace el cambio en
      *       memoria si falla), así que el archivo siempre está al día. Reescribirlas desde
@@ -70,6 +71,7 @@ public class ContextoAplicacion {
     public void guardarTodo() throws PersistenciaException {
         sincronizarUsuarios();
         gestorArchivos.guardarUsuarios(usuarios);
+        sincronizarPublicaciones();
         gestorArchivos.guardarPublicaciones(publicaciones);
     }
 
@@ -99,6 +101,21 @@ public class ContextoAplicacion {
     public void sincronizarPerfiles() throws PersistenciaException {
         sincronizarUsuarios();
         gestorArchivos.cargarPerfiles(perfiles, usuarios);
+    }
+
+    /**
+     * Agrega a memoria las publicaciones del archivo que todavía no están (por ejemplo,
+     * publicadas desde otra instancia del programa). La aplicación nunca elimina
+     * publicaciones, así que basta con agregar las que faltan.
+     *
+     * <p>La carga es transaccional: si el archivo está dañado, la memoria no cambia y se
+     * bloquea su escritura (reglas de {@link GestorArchivos}).
+     */
+    public void sincronizarPublicaciones() throws PersistenciaException {
+        sincronizarUsuarios();
+        ListaPublicaciones enDisco = new ListaPublicaciones();
+        gestorArchivos.cargarPublicaciones(enDisco, usuarios);
+        publicaciones.combinarCon(enDisco);
     }
 
     /** Agrega a memoria los usuarios del archivo que todavía no están (por ejemplo, registrados en otra instancia). */

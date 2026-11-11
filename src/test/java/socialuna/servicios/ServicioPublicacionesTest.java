@@ -253,4 +253,62 @@ class ServicioPublicacionesTest {
 
         assertNull(servicio.obtenerAutor(p));
     }
+
+    // ------------------------------------------------------------------ varias instancias
+
+    /** Simula una segunda instancia del programa: memoria propia, misma carpeta data/. */
+    private ServicioPublicaciones otraInstancia(ContextoAplicacion[] contextoDeSalida) {
+        ContextoAplicacion otro = new ContextoAplicacion(new GestorArchivos(carpetaTemporal));
+        otro.getUsuarios().agregar(ana);
+        otro.getUsuarios().agregar(luis);
+        otro.getUsuarios().agregar(sofia);
+        contextoDeSalida[0] = otro;
+        return new ServicioPublicaciones(otro, new ServicioAmistades(otro));
+    }
+
+    @Test
+    void publicarIncluyeLoQuePublicoOtraInstanciaYNoRepiteIds() throws Exception {
+        ContextoAplicacion[] otro = new ContextoAplicacion[1];
+        ServicioPublicaciones servicioB = otraInstancia(otro);
+
+        String idA = servicio.publicar("1", "de la instancia A").getPublicacion().getId();
+        // La instancia B no sabe de la publicación de A y publica la suya
+        String idB = servicioB.publicar("2", "de la instancia B").getPublicacion().getId();
+
+        assertEquals("P1", idA);
+        assertEquals("P2", idB);
+        assertEquals(2, otro[0].getPublicaciones().tamano());
+
+        ListaPublicaciones enDisco = new ListaPublicaciones();
+        new GestorArchivos(carpetaTemporal).cargarPublicaciones(enDisco, contexto.getUsuarios());
+        assertEquals(2, enDisco.tamano()); // ninguna se perdió
+    }
+
+    @Test
+    void cerrarLaAplicacionNoBorraPublicacionesDeOtraInstancia() throws Exception {
+        ContextoAplicacion[] otro = new ContextoAplicacion[1];
+        ServicioPublicaciones servicioB = otraInstancia(otro);
+        servicio.publicar("1", "de A");
+        servicioB.publicar("2", "de B"); // A todavía no la tiene en memoria
+
+        contexto.guardarTodo(); // A cierra con una memoria vieja
+
+        ListaPublicaciones enDisco = new ListaPublicaciones();
+        new GestorArchivos(carpetaTemporal).cargarPublicaciones(enDisco, contexto.getUsuarios());
+        assertEquals(2, enDisco.tamano());
+        assertEquals(2, contexto.getPublicaciones().tamano());
+    }
+
+    @Test
+    void actualizarDesdeDiscoIncorporaPublicacionesDeOtraInstancia() {
+        ContextoAplicacion[] otro = new ContextoAplicacion[1];
+        ServicioPublicaciones servicioB = otraInstancia(otro);
+        servicioB.publicar("1", "publicada en B");
+        assertTrue(contexto.getPublicaciones().estaVacia());
+
+        assertTrue(servicio.actualizarDesdeDisco());
+
+        assertEquals(1, contexto.getPublicaciones().tamano());
+        assertEquals("publicada en B", servicio.obtenerMuroPersonal("1").obtener(0).getTexto());
+    }
 }

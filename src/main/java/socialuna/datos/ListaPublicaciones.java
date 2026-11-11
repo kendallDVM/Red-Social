@@ -62,6 +62,25 @@ public class ListaPublicaciones {
         return buscarPorId(id) != null;
     }
 
+    /**
+     * Agrega a esta lista las publicaciones de {@code otra} que todavía no están (se
+     * comparan por ID). Las que ya existen no se tocan y nunca se eliminan publicaciones.
+     *
+     * <p>Sirve para incorporar lo que otra instancia del programa guardó en el archivo.
+     *
+     * @return cantidad de publicaciones agregadas
+     */
+    public int combinarCon(ListaPublicaciones otra) {
+        int agregadas = 0;
+        for (Publicacion p : otra.publicaciones) {
+            if (!existeId(p.getId())) {
+                publicaciones.agregar(p);
+                agregadas++;
+            }
+        }
+        return agregadas;
+    }
+
     /** @return {@code true} si se encontró y eliminó la publicación */
     public boolean eliminarPorId(String id) {
         Publicacion p = buscarPorId(id);

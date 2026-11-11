@@ -16,6 +16,11 @@ import socialuna.modelo.Usuario;
  * aquí, así se pueden probar sin interfaz gráfica. Todo se consulta en memoria; el
  * archivo {@code publicaciones.json} solo se escribe al publicar.
  *
+ * <p><b>Datos compartidos entre instancias:</b> antes de publicar se releen las publicaciones
+ * del disco ({@link ContextoAplicacion#sincronizarPublicaciones()}). Así, si el programa está
+ * abierto dos veces, cada instancia ve lo que publicó la otra, no repite IDs y no borra
+ * publicaciones ajenas al guardar.
+ *
  * <p>Usa el Módulo 2 ({@link ServicioAmistades#obtenerIdsVisibles}) para saber de quién
  * se ven las publicaciones, y el Módulo 1 (la lista de usuarios) para mostrar el nombre
  * del autor.
@@ -67,6 +72,13 @@ public class ServicioPublicaciones {
                             + "El máximo es " + MAX_CARACTERES + ".");
         }
 
+        try {
+            contexto.sincronizarPublicaciones(); // primero lo que publicó otra instancia
+        } catch (PersistenciaException e) {
+            return ResultadoPublicacion.error(ResultadoPublicacion.Tipo.ERROR_PERSISTENCIA,
+                    "No se pudieron leer los datos actualizados; no se publicó el mensaje. " + e.getMessage());
+        }
+
         ListaPublicaciones lista = contexto.getPublicaciones();
         Publicacion nueva = new Publicacion(lista.generarId(), idAutor, mensaje, fechaHora);
         lista.agregar(nueva);
@@ -81,6 +93,23 @@ public class ServicioPublicaciones {
     }
 
     // ------------------------------------------------------------------ muro
+
+    /**
+     * Relee del disco las publicaciones, los usuarios y las amistades para ver los cambios
+     * hechos por otra instancia del programa. El muro lo llama al refrescarse.
+     *
+     * @return {@code true} si se pudo leer todo; {@code false} si algún archivo no se pudo
+     *         leer (en ese caso se sigue con lo que hay en memoria)
+     */
+    public boolean actualizarDesdeDisco() {
+        boolean todoBien = servicioAmistades.actualizarDesdeDisco();
+        try {
+            contexto.sincronizarPublicaciones();
+        } catch (PersistenciaException e) {
+            todoBien = false;
+        }
+        return todoBien;
+    }
 
     /**
      * <b>Muro general</b>: publicaciones del usuario y de sus amigos, de la más reciente
