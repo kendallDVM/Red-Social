@@ -63,19 +63,26 @@ public class ListaPublicaciones {
     }
 
     /**
-     * Agrega a esta lista las publicaciones de {@code otra} que todavía no están (se
-     * comparan por ID). Las que ya existen no se tocan y nunca se eliminan publicaciones.
-     *
-     * <p>Sirve para incorporar lo que otra instancia del programa guardó en el archivo.
+     * Incorpora lo que otra instancia del programa guardó en el archivo ({@code otra}):
+     * <ul>
+     *   <li>Agrega las publicaciones que todavía no están (se comparan por ID). Nunca se
+     *       eliminan publicaciones ni se cambia su texto.</li>
+     *   <li>En las que ya existen, los "me gusta" se <b>reemplazan</b> por los de {@code otra}:
+     *       cada cambio se guarda en el momento, así que el archivo es la fuente de verdad
+     *       (unirlos haría reaparecer un "me gusta" que otra instancia ya quitó).</li>
+     * </ul>
      *
      * @return cantidad de publicaciones agregadas
      */
     public int combinarCon(ListaPublicaciones otra) {
         int agregadas = 0;
         for (Publicacion p : otra.publicaciones) {
-            if (!existeId(p.getId())) {
+            Publicacion existente = buscarPorId(p.getId());
+            if (existente == null) {
                 publicaciones.agregar(p);
                 agregadas++;
+            } else if (existente != p) {
+                existente.reemplazarMeGusta(p.getMeGusta());
             }
         }
         return agregadas;

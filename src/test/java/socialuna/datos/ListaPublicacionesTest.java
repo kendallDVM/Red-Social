@@ -161,4 +161,36 @@ class ListaPublicacionesTest {
         assertEquals("Texto propio", lista.buscarPorId("P1").getTexto());
         assertEquals(0, lista.combinarCon(new ListaPublicaciones()));
     }
+
+    @Test
+    void combinarConReemplazaLosMeGustaPorLosDelDisco() {
+        Publicacion enMemoria = pub("P1", "1", "2026-11-01 10:00:00");
+        enMemoria.agregarMeGusta("2");
+        enMemoria.agregarMeGusta("3");
+        lista.agregar(enMemoria);
+
+        // En el archivo, a "3" ya no le gusta y a "4" sí
+        ListaPublicaciones deDisco = new ListaPublicaciones();
+        Publicacion actualizada = pub("P1", "1", "2026-11-01 10:00:00");
+        actualizada.agregarMeGusta("2");
+        actualizada.agregarMeGusta("4");
+        deDisco.agregar(actualizada);
+
+        lista.combinarCon(deDisco);
+
+        assertEquals(java.util.List.of("2", "4"), java.util.List.copyOf(lista.buscarPorId("P1").getMeGusta()));
+    }
+
+    @Test
+    void combinarConQuitaLosMeGustaQueYaNoEstanEnElDisco() {
+        Publicacion enMemoria = pub("P1", "1", "2026-11-01 10:00:00");
+        enMemoria.agregarMeGusta("2");
+        lista.agregar(enMemoria);
+        ListaPublicaciones deDisco = new ListaPublicaciones();
+        deDisco.agregar(pub("P1", "1", "2026-11-01 10:00:00"));
+
+        lista.combinarCon(deDisco);
+
+        assertEquals(0, lista.buscarPorId("P1").cantidadMeGusta());
+    }
 }

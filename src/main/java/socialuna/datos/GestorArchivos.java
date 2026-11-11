@@ -554,6 +554,7 @@ public class GestorArchivos {
      *   <li>Si el autor no existe en {@code usuarios}, esa publicación se ignora sin fallar.</li>
      *   <li>Los registros incompletos o con fecha inválida se ignoran.</li>
      *   <li>Si un ID se repite, solo se conserva la primera publicación con ese ID.</li>
+     *   <li>Los "me gusta" de usuarios que no existen se ignoran.</li>
      * </ul>
      * Lo ignorado desaparece del archivo la próxima vez que se guarde.
      *
@@ -612,6 +613,7 @@ public class GestorArchivos {
         if (leidas != null) {
             for (Publicacion publicacion : leidas) {
                 if (esPublicacionValida(publicacion, usuarios) && !temporal.existeId(publicacion.getId())) {
+                    quitarMeGustaDeUsuariosInexistentes(publicacion, usuarios);
                     temporal.agregar(publicacion);
                 }
             }
@@ -622,6 +624,15 @@ public class GestorArchivos {
             destino.agregar(publicacion);
         }
         return destino.tamano();
+    }
+
+    /** Un "me gusta" de un usuario que ya no existe se ignora sin fallar. */
+    private static void quitarMeGustaDeUsuariosInexistentes(Publicacion publicacion, ListaUsuarios usuarios) {
+        for (String id : publicacion.getMeGusta()) { // getMeGusta devuelve una copia: se puede modificar
+            if (!usuarios.existeId(id)) {
+                publicacion.quitarMeGusta(id);
+            }
+        }
     }
 
     /** Una publicación se acepta si está completa y su autor existe. */
