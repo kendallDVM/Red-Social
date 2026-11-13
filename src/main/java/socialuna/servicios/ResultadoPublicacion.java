@@ -21,7 +21,10 @@ public final class ResultadoPublicacion {
         SIN_SESION,
         /** La publicación ya no existe (por ejemplo, el ID no está en el archivo). */
         PUBLICACION_NO_EXISTE,
-        /** Solo se puede dar "me gusta" a las publicaciones propias y a las de los amigos. */
+        /**
+         * La acción no está permitida: dar "me gusta" a publicaciones que no son propias ni de
+         * amigos, o eliminar una publicación de otra persona.
+         */
         NO_PERMITIDO,
         /** No se pudo guardar publicaciones.json; el cambio se deshizo. */
         ERROR_PERSISTENCIA

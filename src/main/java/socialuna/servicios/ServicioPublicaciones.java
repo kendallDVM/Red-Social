@@ -14,7 +14,7 @@ import socialuna.modelo.Usuario;
  *
  * <p>Las ventanas solo recogen el texto y muestran el resultado; todas las reglas están
  * aquí, así se pueden probar sin interfaz gráfica. Todo se consulta en memoria; el
- * archivo {@code publicaciones.json} solo se escribe al publicar.
+ * archivo {@code publicaciones.json} se escribe al publicar, al dar "me gusta" y al eliminar.
  *
  * <p><b>Datos compartidos entre instancias:</b> antes de publicar se releen las publicaciones
  * del disco ({@link ContextoAplicacion#sincronizarPublicaciones()}). Así, si el programa está
@@ -161,7 +161,7 @@ public class ServicioPublicaciones {
 
         ListaPublicaciones lista = contexto.getPublicaciones();
         Publicacion publicacion = lista.buscarPorId(idPublicacion);
-        if (publicacion == null) {
+        if (publicacion == null || publicacion.isEliminada()) {
             return ResultadoPublicacion.error(ResultadoPublicacion.Tipo.PUBLICACION_NO_EXISTE,
                     "La publicación ya no existe.");
         }
@@ -181,6 +181,54 @@ public class ServicioPublicaciones {
         }
         return ResultadoPublicacion.exito(daMeGusta ? "Te gusta esta publicación." : "Quitaste tu me gusta.",
                 publicacion);
+    }
+
+    // ------------------------------------------------------------------ eliminar
+
+    /**
+     * Elimina una publicación del usuario y lo guarda en {@code publicaciones.json} en ese
+     * momento. Deja de verse en todos los muros (el del autor y el de sus amigos).
+     *
+     * <p>Solo el autor puede eliminar sus publicaciones. La publicación se <b>marca</b> como
+     * eliminada en vez de borrarse del archivo, para que otra instancia del programa abierta al
+     * mismo tiempo se entere y no la vuelva a agregar al sincronizar. Antes de cambiar se
+     * releen las publicaciones del disco. Si el guardado falla, el cambio se deshace en memoria.
+     *
+     * @param idUsuario     quien elimina (el usuario activo)
+     * @param idPublicacion publicación elegida
+     */
+    public ResultadoPublicacion eliminarPublicacion(String idUsuario, String idPublicacion) {
+        if (idUsuario == null || idUsuario.isBlank() || !contexto.getUsuarios().existeId(idUsuario)) {
+            return ResultadoPublicacion.error(ResultadoPublicacion.Tipo.SIN_SESION,
+                    "Debe iniciar sesión para eliminar publicaciones.");
+        }
+        try {
+            contexto.sincronizarPublicaciones();
+        } catch (PersistenciaException e) {
+            return ResultadoPublicacion.error(ResultadoPublicacion.Tipo.ERROR_PERSISTENCIA,
+                    "No se pudieron leer los datos actualizados; no se eliminó nada. " + e.getMessage());
+        }
+
+        ListaPublicaciones lista = contexto.getPublicaciones();
+        Publicacion publicacion = lista.buscarPorId(idPublicacion);
+        if (publicacion == null || publicacion.isEliminada()) {
+            return ResultadoPublicacion.error(ResultadoPublicacion.Tipo.PUBLICACION_NO_EXISTE,
+                    "La publicación ya no existe.");
+        }
+        if (!publicacion.getIdAutor().equals(idUsuario)) {
+            return ResultadoPublicacion.error(ResultadoPublicacion.Tipo.NO_PERMITIDO,
+                    "Solo puedes eliminar tus propias publicaciones.");
+        }
+
+        publicacion.setEliminada(true);
+        try {
+            contexto.getGestorArchivos().guardarPublicaciones(lista);
+        } catch (PersistenciaException e) {
+            publicacion.setEliminada(false);
+            return ResultadoPublicacion.error(ResultadoPublicacion.Tipo.ERROR_PERSISTENCIA,
+                    "No se pudo eliminar la publicación porque los datos no se guardaron. " + e.getMessage());
+        }
+        return ResultadoPublicacion.exito("Tu publicación se eliminó.", publicacion);
     }
 
     private static void cambiarMeGusta(Publicacion publicacion, String idUsuario, boolean darMeGusta) {

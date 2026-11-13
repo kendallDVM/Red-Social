@@ -315,8 +315,33 @@ public class PanelMuro extends JPanel {
                 BorderFactory.createEmptyBorder(10, 14, 12, 14)));
         tarjeta.add(encabezado, BorderLayout.NORTH);
         tarjeta.add(texto, BorderLayout.CENTER);
-        tarjeta.add(crearPieMeGusta(publicacion, activo), BorderLayout.SOUTH);
+        tarjeta.add(crearPie(publicacion, activo, propia), BorderLayout.SOUTH);
         return tarjeta;
+    }
+
+    /**
+     * Pie de la tarjeta: botón "Me gusta" a la izquierda y, si la publicación es del usuario
+     * activo, botón "Eliminar" a la derecha.
+     */
+    private JComponent crearPie(Publicacion publicacion, Usuario activo, boolean propia) {
+        JPanel pie = new JPanel(new BorderLayout());
+        pie.setOpaque(false);
+        pie.add(crearPieMeGusta(publicacion, activo), BorderLayout.WEST);
+        if (propia) {
+            JButton eliminar = Estilos.botonSecundario("Eliminar");
+            eliminar.setName("eliminar-" + publicacion.getId());
+            eliminar.setFont(Estilos.fuente(Font.BOLD, 12));
+            eliminar.setBorder(BorderFactory.createEmptyBorder(5, 12, 5, 12));
+            eliminar.setFocusable(false);
+            eliminar.setToolTipText("Eliminar esta publicación");
+            eliminar.addActionListener(e -> eliminarPublicacion(publicacion));
+            JPanel derecha = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+            derecha.setOpaque(false);
+            derecha.setBorder(BorderFactory.createEmptyBorder(4, 0, 0, 0));
+            derecha.add(eliminar);
+            pie.add(derecha, BorderLayout.EAST);
+        }
+        return pie;
     }
 
     /** Botón "Me gusta" con el total; cambia de color cuando al usuario activo le gusta la publicación. */
@@ -365,6 +390,30 @@ public class PanelMuro extends JPanel {
         }
         refrescar(false); // se actualiza el botón sin saltar al inicio de la lista
         SwingUtilities.invokeLater(() -> desplazamiento.getVerticalScrollBar().setValue(posicion));
+    }
+
+    /** Pide confirmación y elimina una publicación propia; el muro se refresca sin saltar al inicio. */
+    private void eliminarPublicacion(Publicacion publicacion) {
+        int opcion = JOptionPane.showConfirmDialog(this,
+                "¿Seguro que desea eliminar esta publicación?\nNo se podrá recuperar.",
+                "Eliminar publicación", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+        if (opcion != JOptionPane.YES_OPTION) {
+            return;
+        }
+        Usuario activo = Sesion.getUsuarioActivo();
+        ResultadoPublicacion resultado = servicio.eliminarPublicacion(activo == null ? null : activo.getId(),
+                publicacion.getId());
+        int posicion = desplazamiento.getVerticalScrollBar().getValue();
+        refrescar(false);
+        SwingUtilities.invokeLater(() -> desplazamiento.getVerticalScrollBar().setValue(posicion));
+        if (resultado.esExitoso()) {
+            JOptionPane.showMessageDialog(this, resultado.getMensaje(), TITULO_ALERTA,
+                    JOptionPane.INFORMATION_MESSAGE);
+        } else {
+            int icono = resultado.getTipo() == ResultadoPublicacion.Tipo.ERROR_PERSISTENCIA
+                    ? JOptionPane.ERROR_MESSAGE : JOptionPane.WARNING_MESSAGE;
+            JOptionPane.showMessageDialog(this, resultado.getMensaje(), TITULO_ALERTA, icono);
+        }
     }
 
     // ------------------------------------------------------------------ contador
