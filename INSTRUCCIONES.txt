@@ -10,13 +10,18 @@ COMO ABRIR LA APLICACION
   Opcion 3: doble clic en SocialUNA.jar (solo funciona si Windows abre los .jar con Java 17 o superior)
 
   Importante: SocialUNA.jar debe estar junto a la carpeta data\, donde se guardan
-  y leen los datos (usuarios.json, amistades.json y publicaciones.json).
+  y leen los datos (usuarios.json, amistades.json, solicitudes.json, perfiles.json
+  y publicaciones.json).
 
 USUARIOS DE PRUEBA (contrasena para los tres: SocialUNA2026!)
   kendall  - ID 2026001
   greivin  - ID 2026002
   mariano  - ID 2026003
   Amistades de prueba: kendall-greivin y greivin-mariano (kendall y mariano no son amigos).
+  Cada uno tiene 2 publicaciones. Sin solicitudes pendientes.
+
+DIAGRAMA DE CLASES (UML)
+  docs\UML-SocialUNA.png
 
 COMPILAR DESDE EL CODIGO FUENTE (opcional)
   Requiere Maven. En la carpeta del codigo: mvn package

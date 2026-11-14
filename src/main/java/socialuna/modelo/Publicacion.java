@@ -20,6 +20,11 @@ import java.util.Set;
  * repetidos y en el orden en que lo dieron. Mientras nadie le dé "me gusta" el campo queda
  * vacío ({@code null}) y no aparece en el JSON, así los archivos anteriores siguen siendo válidos.
  *
+ * <p><b>Eliminación:</b> cuando el autor elimina una publicación no se borra del archivo, sino
+ * que se <b>marca</b> como eliminada ({@code "eliminada": true}) y deja de mostrarse. Así, si el
+ * programa está abierto dos veces, la otra instancia se entera de que se eliminó y no la vuelve
+ * a agregar al sincronizar. Mientras no esté eliminada el campo no aparece en el JSON.
+ *
  * <p>Clase base compartida: la lógica de publicar y del muro corresponde al Módulo 3.
  */
 public class Publicacion {
@@ -35,6 +40,9 @@ public class Publicacion {
 
     /** IDs de los usuarios a quienes les gusta; {@code null} si a nadie (no se escribe en el JSON). */
     private Set<String> meGusta;
+
+    /** {@code true} si el autor la eliminó; {@code null} si sigue visible (no se escribe en el JSON). */
+    private Boolean eliminada;
 
     /** Constructor vacío requerido por Gson. */
     private Publicacion() {
@@ -120,6 +128,21 @@ public class Publicacion {
     /** Fecha convertida a {@link LocalDateTime}, útil para ordenar el muro. */
     public LocalDateTime getFechaHoraComoFecha() {
         return LocalDateTime.parse(fechaHora, FORMATO_FECHA);
+    }
+
+    // ------------------------------------------------------------------ eliminación
+
+    /** Indica si el autor eliminó la publicación (ya no se muestra en ningún muro). */
+    public boolean isEliminada() {
+        return Boolean.TRUE.equals(eliminada);
+    }
+
+    /**
+     * Marca o desmarca la publicación como eliminada. Desmarcar solo se usa para deshacer
+     * una eliminación cuyo guardado falló.
+     */
+    public void setEliminada(boolean eliminada) {
+        this.eliminada = eliminada ? Boolean.TRUE : null;
     }
 
     // ------------------------------------------------------------------ me gusta

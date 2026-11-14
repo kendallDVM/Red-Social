@@ -9,7 +9,7 @@ Equipo: Kendall, Greivin y Mariano.
 |---|---|
 | **1. Autenticación** (Kendall) | Registro (ID, nombre, usuario y contraseña) y login con las credenciales leídas de los archivos. Las contraseñas se guardan con hash BCrypt. |
 | **2. Interacción social** (Greivin) | Buscador de usuarios, solicitudes de amistad (enviar, aceptar, rechazar y cancelar), lista de amigos y eliminar amigos. |
-| **3. Publicaciones y muro** (Mariano) | Publicar mensajes (máximo 500 caracteres), **Muro general** (propias y de amigos) y **Mi muro**, de la más reciente a la más antigua. **"Me gusta"** en cada publicación. |
+| **3. Publicaciones y muro** (Mariano) | Publicar mensajes (máximo 500 caracteres), **Muro general** (propias y de amigos) y **Mi muro**, de la más reciente a la más antigua. **"Me gusta"** en cada publicación y **eliminar** las publicaciones propias. |
 | **Perfiles** (Kendall) | Consulta y edición del perfil propio, y ver el perfil de otros usuarios. |
 
 ### "Me gusta"
@@ -18,6 +18,12 @@ Equipo: Kendall, Greivin y Mariano.
 - Al pasar el mouse sobre el botón se ve a quiénes les gusta.
 - Solo se puede dar "me gusta" a las publicaciones propias y a las de los amigos (las del muro general). Volver a pulsar lo quita.
 - Se guarda en `data/publicaciones.json` en el momento. Los archivos anteriores, sin ese campo, siguen funcionando.
+
+### Eliminar publicaciones
+
+- Cada publicación propia muestra el botón **Eliminar**, que pide confirmación. Solo el autor puede eliminarla.
+- Deja de verse en todos los muros (el propio y el de los amigos) y se guarda en el momento.
+- En `data/publicaciones.json` se marca con `"eliminada": true` en vez de borrarse, para que otra instancia abierta del programa se entere y no la vuelva a agregar.
 
 ## Estructuras de datos y archivos
 

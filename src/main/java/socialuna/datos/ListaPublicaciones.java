@@ -70,6 +70,8 @@ public class ListaPublicaciones {
      *   <li>En las que ya existen, los "me gusta" se <b>reemplazan</b> por los de {@code otra}:
      *       cada cambio se guarda en el momento, así que el archivo es la fuente de verdad
      *       (unirlos haría reaparecer un "me gusta" que otra instancia ya quitó).</li>
+     *   <li>Si en {@code otra} una publicación está eliminada, aquí también se marca como
+     *       eliminada. Una eliminación nunca se deshace al sincronizar.</li>
      * </ul>
      *
      * @return cantidad de publicaciones agregadas
@@ -83,6 +85,9 @@ public class ListaPublicaciones {
                 agregadas++;
             } else if (existente != p) {
                 existente.reemplazarMeGusta(p.getMeGusta());
+                if (p.isEliminada()) {
+                    existente.setEliminada(true);
+                }
             }
         }
         return agregadas;
@@ -122,6 +127,7 @@ public class ListaPublicaciones {
     /**
      * Publicaciones cuyo autor está en {@code idsAutores}, ordenadas de la <b>más reciente a
      * la más antigua</b>. Si dos tienen la misma fecha y hora, la publicada después aparece primero.
+     * Las publicaciones eliminadas no se incluyen.
      *
      * <p>Costo: O(n) para filtrar (los IDs se buscan en un conjunto hash) más O(k log k)
      * para ordenar las k publicaciones que quedaron.
@@ -144,7 +150,7 @@ public class ListaPublicaciones {
         int cantidad = 0;
         for (int i = publicaciones.tamano() - 1; i >= 0; i--) {
             Publicacion p = publicaciones.obtener(i);
-            if (autores.contains(p.getIdAutor())) {
+            if (!p.isEliminada() && autores.contains(p.getIdAutor())) {
                 filtradas[cantidad++] = p;
             }
         }
